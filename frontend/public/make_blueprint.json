@@ -1,0 +1,45 @@
+[
+  {
+    "sub": [
+      {
+        "id": 1,
+        "module": "gateway:CustomWebhook",
+        "version": 1,
+        "parameters": {
+          "hook": null
+        },
+        "mapper": {},
+        "metadata": {
+          "designer": {
+            "x": 0,
+            "y": 0
+          }
+        }
+      },
+      {
+        "id": 2,
+        "module": "linkedin:CreateACompanyUpdate",
+        "version": 1,
+        "parameters": {
+          "account": null
+        },
+        "mapper": {
+          "comment": "{{1.linkedin_post}}",
+          "company": null
+        },
+        "metadata": {
+          "designer": {
+            "x": 300,
+            "y": 0
+          }
+        }
+      }
+    ],
+    "connections": [
+      {
+        "from": 1,
+        "to": 2
+      }
+    ]
+  }
+]
