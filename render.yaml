@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: newsletter-digest-api
+    env: python
+    rootDir: backend
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: AIMLAPI_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: CRON_SECRET
+        sync: false
+      - key: PUBLIC_APP_URL
+        sync: false
+      - key: PYTHON_VERSION
+        value: "3.11.9"
