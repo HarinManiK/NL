@@ -43,13 +43,14 @@ const DEFAULT_PROMPTS: Prompts = {
     "Keep every concrete fact: company names, product names, numbers, dates, names of " +
     "people, and links to the original story when present. Drop fluff, intros, signoffs, " +
     "and self-promotion. Use short bullet points under bold theme headings. " +
-    "Aim for ~400-700 words depending on volume. Output plain text/markdown — no preamble.",
+    "Aim for ~400-700 words depending on volume. Output plain text/markdown with no preamble. " +
+    "When citing links, do not use markdown link syntax; write the raw URL after the sentence.",
   story:
     "You are turning the digest below into a single flowing narrative — a 'what happened " +
     "today in this world' story. Write in connected paragraphs, not bullets. Keep it " +
     "factual and grounded; do not invent details. Weave related items together so the " +
     "reader gets the arc of the day across topics. ~300-500 words. Output plain text " +
-    "with no preamble.",
+    "with no preamble. If you include links, write the raw URL instead of markdown links.",
   linkedin:
     "Turn the digest below into an engaging LinkedIn post.\n\n" +
     "Goal:\n" +
@@ -68,6 +69,7 @@ const DEFAULT_PROMPTS: Prompts = {
     "- Length: 350–600 words depending on digest size.\n" +
     "- No emojis unless genuinely useful.\n" +
     "- Add 3–5 relevant hashtags on the final line.\n" +
+    "- If you include links, write raw URLs. Do not use markdown link syntax.\n" +
     "- Output only the LinkedIn post. No preamble.\n\n" +
     "Style:\n" +
     "Conversational, sharp, professional, founder/investor/operator voice.\n" +
@@ -1262,7 +1264,7 @@ function ResultTabs({
               copied ? "text-emerald-600 font-medium" : "text-zinc-500 hover:text-zinc-900"
             }`}
           >
-            {copied ? "✓ Copied!" : "Copy"}
+            {copied ? "✓ Copied!" : active === "newsletter" ? "Copy HTML" : "Copy"}
           </button>
         </div>
       </div>

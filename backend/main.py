@@ -82,14 +82,14 @@ DEFAULT_DIGEST_PROMPT = (
     "dates, names of people, and links to the original story when present. Drop fluff, "
     "intros, signoffs, and self-promotion. Use short bullet points under bold theme "
     "headings. Aim for ~400-700 words depending on volume. Output plain text/markdown — "
-    "no preamble."
+    "no preamble. When citing links, do not use markdown link syntax; write the raw URL after the sentence."
 )
 DEFAULT_STORY_PROMPT = (
     "You are turning the digest below into a single flowing narrative — a 'what happened "
     "today in this world' story. Write in connected paragraphs, not bullets. Keep it "
     "factual and grounded; do not invent details. Weave related items together so the "
     "reader gets the arc of the day across topics. ~300-500 words. Output plain text "
-    "with no preamble."
+    "with no preamble. If you include links, write the raw URL instead of markdown links."
 )
 DEFAULT_LINKEDIN_PROMPT = (
     "Turn the digest below into an engaging LinkedIn post.\n\n"
@@ -109,6 +109,7 @@ DEFAULT_LINKEDIN_PROMPT = (
     "- Length: 350–600 words depending on digest size.\n"
     "- No emojis unless genuinely useful.\n"
     "- Add 3–5 relevant hashtags on the final line.\n"
+    "- If you include links, write raw URLs. Do not use markdown link syntax.\n"
     "- Output only the LinkedIn post. No preamble.\n\n"
     "Style:\n"
     "Conversational, sharp, professional, founder/investor/operator voice.\n"
@@ -285,6 +286,12 @@ def _ensure_owner_token(settings: Optional[dict], email: str) -> str:
 def _append_links_to_input(base: str, useful_links: List[dict]) -> str:
     block = useful_links_block(useful_links)
     return base + block if block else base
+
+
+def _clean_generated_text(text: str) -> str:
+    cleaned = (text or "").strip()
+    cleaned = re.sub(r"^[:\s*]+(?=[A-Za-z0-9])", "", cleaned)
+    return cleaned
 
 
 def _smtp_config_from_settings(settings: dict) -> dict:
@@ -572,7 +579,7 @@ def _generate_run(
     if len(aggregate) > 80000:
         aggregate = aggregate[:80000] + "\n\n[...aggregate truncated to fit context...]"
 
-    digest = chat(prompts.digest, aggregate, max_tokens=8192, temperature=0.4)
+    digest = _clean_generated_text(chat(prompts.digest, aggregate, max_tokens=8192, temperature=0.4))
     linked_digest = _append_links_to_input(digest, useful_links)
     story = ""
     linkedin = ""
@@ -590,9 +597,9 @@ def _generate_run(
             )
         for name, future in futures.items():
             if name == "story":
-                story = future.result()
+                story = _clean_generated_text(future.result())
             elif name == "linkedin":
-                linkedin = future.result()
+                linkedin = _clean_generated_text(future.result())
             elif name == "newsletter_subject":
                 newsletter_subject = future.result().strip().strip('"')
     if newsletter_enabled:
@@ -822,7 +829,7 @@ def run_stream(req: RunReq):
             # 4) Digest
             yield _sse({"type": "step", "name": "digest", "status": "start"})
             try:
-                digest = chat(req.prompts.digest, aggregate, max_tokens=8192, temperature=0.4)
+                digest = _clean_generated_text(chat(req.prompts.digest, aggregate, max_tokens=8192, temperature=0.4))
             except LLMError as e:
                 yield _sse({"type": "error", "message": f"Digest step failed: {e}"})
                 return
@@ -860,9 +867,9 @@ def run_stream(req: RunReq):
 
                     for name, future in futures.items():
                         if name == "story":
-                            story = future.result()
+                            story = _clean_generated_text(future.result())
                         elif name == "linkedin":
-                            linkedin = future.result()
+                            linkedin = _clean_generated_text(future.result())
                         elif name == "newsletter_subject":
                             newsletter_subject = future.result().strip().strip('"')
 

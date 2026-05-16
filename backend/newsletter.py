@@ -72,6 +72,24 @@ def _normalize_url(raw_url: str) -> str:
     ))
 
 
+def _is_unresolved_tracking_url(url: str) -> bool:
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    path = parsed.path.lower()
+    query = parsed.query
+    if "moengage" in host or "emailclick" in path:
+        return True
+    if host.endswith("quora.com") and path.startswith("/qemail/tc"):
+        return True
+    if "list-manage.com" in host and "track" in path:
+        return True
+    if any(marker in path for marker in ("/click", "/track", "/redirect", "/r/")) and len(query) > 120:
+        return True
+    if len(query) > 350 and not any(f"{key}=" in query.lower() for key in REDIRECT_PARAM_KEYS):
+        return True
+    return False
+
+
 def _is_useful_link(url: str, text: str, context: str) -> bool:
     haystack = f"{url} {text} {context}".lower()
     if any(word in haystack for word in JUNK_LINK_WORDS):
@@ -92,8 +110,11 @@ def extract_useful_links(records: Iterable[MailRecord]) -> List[dict]:
     for rec in records:
         for link in rec.links:
             url = _unwrap_redirect_url(link.url)
+            raw_normalized = _normalize_url(html.unescape((link.url or "").strip()))
             text = re.sub(r"\s+", " ", link.text or "").strip()
             context = re.sub(r"\s+", " ", link.context or "").strip()
+            if url and raw_normalized and url == raw_normalized and _is_unresolved_tracking_url(url):
+                continue
             if not url or not _is_useful_link(url, text, context):
                 continue
             key = url.lower()
