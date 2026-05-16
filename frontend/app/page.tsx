@@ -44,13 +44,15 @@ const DEFAULT_PROMPTS: Prompts = {
     "people, and links to the original story when present. Drop fluff, intros, signoffs, " +
     "and self-promotion. Use short bullet points under bold theme headings. " +
     "Aim for ~400-700 words depending on volume. Output plain text/markdown with no preamble. " +
-    "When citing links, do not use markdown link syntax; write the raw URL after the sentence.",
+    "When citing links, do not use markdown link syntax; write the raw URL after the sentence. " +
+    "Do not create a final 'For more info' section; the system appends that section.",
   story:
     "You are turning the digest below into a single flowing narrative — a 'what happened " +
     "today in this world' story. Write in connected paragraphs, not bullets. Keep it " +
     "factual and grounded; do not invent details. Weave related items together so the " +
     "reader gets the arc of the day across topics. ~300-500 words. Output plain text " +
-    "with no preamble. If you include links, write the raw URL instead of markdown links.",
+    "with no preamble. If you include links, write the raw URL instead of markdown links. " +
+    "Do not create a final 'For more info' section; the system appends that section.",
   linkedin:
     "Turn the digest below into an engaging LinkedIn post.\n\n" +
     "Goal:\n" +
@@ -70,6 +72,7 @@ const DEFAULT_PROMPTS: Prompts = {
     "- No emojis unless genuinely useful.\n" +
     "- Add 3–5 relevant hashtags on the final line.\n" +
     "- If you include links, write raw URLs. Do not use markdown link syntax.\n" +
+    "- Do not create a final 'For more info' section; the system appends that section.\n" +
     "- Output only the LinkedIn post. No preamble.\n\n" +
     "Style:\n" +
     "Conversational, sharp, professional, founder/investor/operator voice.\n" +
@@ -81,8 +84,8 @@ const DEFAULT_PROMPTS: Prompts = {
   newsletter_html:
     "Turn the digest below into a polished HTML newsletter email. Use simple email-safe HTML only: " +
     "h1, h2, h3, p, ul, ol, li, strong, em, a, br, hr, div, and span. " +
-    "Preserve important concrete facts and do not invent details. Include useful source links near the relevant sections " +
-    "or in a final 'For more info' section using phrases like 'For more info about X, click here: https://example.com'. " +
+    "Preserve important concrete facts and do not invent details. You may include useful source links near the relevant sections, " +
+    "but do not create a final 'For more info' section because the system appends that section. " +
     "Do not include scripts, forms, external stylesheets, images, or an unsubscribe footer. Output only the HTML body.",
 };
 

@@ -41,6 +41,8 @@ from imap_fetch import MailRecord, fetch_recent_mails, fetch_recent_mails_stream
 from llm import LLMError, chat, filter_newsletters
 from newsletter import (
     append_unsubscribe_footer,
+    append_links_html,
+    append_links_text,
     extract_useful_links,
     sanitize_newsletter_html,
     send_html_email_smtp,
@@ -82,14 +84,16 @@ DEFAULT_DIGEST_PROMPT = (
     "dates, names of people, and links to the original story when present. Drop fluff, "
     "intros, signoffs, and self-promotion. Use short bullet points under bold theme "
     "headings. Aim for ~400-700 words depending on volume. Output plain text/markdown — "
-    "no preamble. When citing links, do not use markdown link syntax; write the raw URL after the sentence."
+    "no preamble. When citing links, do not use markdown link syntax; write the raw URL after the sentence. "
+    "Do not create a final 'For more info' section; the system appends that section."
 )
 DEFAULT_STORY_PROMPT = (
     "You are turning the digest below into a single flowing narrative — a 'what happened "
     "today in this world' story. Write in connected paragraphs, not bullets. Keep it "
     "factual and grounded; do not invent details. Weave related items together so the "
     "reader gets the arc of the day across topics. ~300-500 words. Output plain text "
-    "with no preamble. If you include links, write the raw URL instead of markdown links."
+    "with no preamble. If you include links, write the raw URL instead of markdown links. "
+    "Do not create a final 'For more info' section; the system appends that section."
 )
 DEFAULT_LINKEDIN_PROMPT = (
     "Turn the digest below into an engaging LinkedIn post.\n\n"
@@ -110,6 +114,7 @@ DEFAULT_LINKEDIN_PROMPT = (
     "- No emojis unless genuinely useful.\n"
     "- Add 3–5 relevant hashtags on the final line.\n"
     "- If you include links, write raw URLs. Do not use markdown link syntax.\n"
+    "- Do not create a final 'For more info' section; the system appends that section.\n"
     "- Output only the LinkedIn post. No preamble.\n\n"
     "Style:\n"
     "Conversational, sharp, professional, founder/investor/operator voice.\n"
@@ -123,8 +128,8 @@ DEFAULT_NEWSLETTER_SUBJECT_PROMPT = (
 DEFAULT_NEWSLETTER_HTML_PROMPT = (
     "Turn the digest below into a polished HTML newsletter email. Use simple email-safe HTML only: "
     "h1, h2, h3, p, ul, ol, li, strong, em, a, br, hr, div, and span. "
-    "Preserve important concrete facts and do not invent details. Include useful source links near the relevant sections "
-    "or in a final 'For more info' section using phrases like 'For more info about X, click here: https://example.com'. "
+    "Preserve important concrete facts and do not invent details. You may include useful source links near the relevant sections, "
+    "but do not create a final 'For more info' section because the system appends that section. "
     "Do not include scripts, forms, external stylesheets, images, or an unsubscribe footer. "
     "Output only the HTML body."
 )
@@ -579,7 +584,10 @@ def _generate_run(
     if len(aggregate) > 80000:
         aggregate = aggregate[:80000] + "\n\n[...aggregate truncated to fit context...]"
 
-    digest = _clean_generated_text(chat(prompts.digest, aggregate, max_tokens=8192, temperature=0.4))
+    digest = append_links_text(
+        _clean_generated_text(chat(prompts.digest, aggregate, max_tokens=8192, temperature=0.4)),
+        useful_links,
+    )
     linked_digest = _append_links_to_input(digest, useful_links)
     story = ""
     linkedin = ""
@@ -597,14 +605,17 @@ def _generate_run(
             )
         for name, future in futures.items():
             if name == "story":
-                story = _clean_generated_text(future.result())
+                story = append_links_text(_clean_generated_text(future.result()), useful_links)
             elif name == "linkedin":
-                linkedin = _clean_generated_text(future.result())
+                linkedin = append_links_text(_clean_generated_text(future.result()), useful_links)
             elif name == "newsletter_subject":
                 newsletter_subject = future.result().strip().strip('"')
     if newsletter_enabled:
-        newsletter_html = sanitize_newsletter_html(
-            chat(prompts.newsletter_html, linked_digest, max_tokens=8192, temperature=0.5)
+        newsletter_html = append_links_html(
+            sanitize_newsletter_html(
+                chat(prompts.newsletter_html, linked_digest, max_tokens=8192, temperature=0.5)
+            ),
+            useful_links,
         )
 
     elapsed = round(time.time() - started, 1)
@@ -829,7 +840,10 @@ def run_stream(req: RunReq):
             # 4) Digest
             yield _sse({"type": "step", "name": "digest", "status": "start"})
             try:
-                digest = _clean_generated_text(chat(req.prompts.digest, aggregate, max_tokens=8192, temperature=0.4))
+                digest = append_links_text(
+                    _clean_generated_text(chat(req.prompts.digest, aggregate, max_tokens=8192, temperature=0.4)),
+                    useful_links,
+                )
             except LLMError as e:
                 yield _sse({"type": "error", "message": f"Digest step failed: {e}"})
                 return
@@ -867,15 +881,18 @@ def run_stream(req: RunReq):
 
                     for name, future in futures.items():
                         if name == "story":
-                            story = _clean_generated_text(future.result())
+                            story = append_links_text(_clean_generated_text(future.result()), useful_links)
                         elif name == "linkedin":
-                            linkedin = _clean_generated_text(future.result())
+                            linkedin = append_links_text(_clean_generated_text(future.result()), useful_links)
                         elif name == "newsletter_subject":
                             newsletter_subject = future.result().strip().strip('"')
 
                 if req.newsletter_enabled:
-                    newsletter_html = sanitize_newsletter_html(
-                        chat(req.prompts.newsletter_html, linked_digest, max_tokens=8192, temperature=0.5)
+                    newsletter_html = append_links_html(
+                        sanitize_newsletter_html(
+                            chat(req.prompts.newsletter_html, linked_digest, max_tokens=8192, temperature=0.5)
+                        ),
+                        useful_links,
                     )
 
             except LLMError as e:

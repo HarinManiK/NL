@@ -145,6 +145,67 @@ def useful_links_block(links: List[dict]) -> str:
     return "\n".join(lines)
 
 
+def _link_label(link: dict) -> str:
+    label = (
+        link.get("text")
+        or link.get("nearby_text")
+        or link.get("source_subject")
+        or "this update"
+    )
+    label = re.sub(r"\s+", " ", label).strip()
+    if len(label) > 120:
+        label = label[:117].rstrip() + "..."
+    return label
+
+
+def format_links_text(links: List[dict]) -> str:
+    if not links:
+        return ""
+    lines = ["For more info:"]
+    for link in links:
+        url = (link.get("url") or "").strip()
+        if not url:
+            continue
+        label = _link_label(link)
+        lines.append(f"- For more info about {label}, click here: {url}")
+    return "\n".join(lines)
+
+
+def append_links_text(text: str, links: List[dict]) -> str:
+    block = format_links_text(links)
+    if not block:
+        return (text or "").strip()
+    return f"{(text or '').strip()}\n\n{block}".strip()
+
+
+def append_links_html(raw_html: str, links: List[dict]) -> str:
+    if not links:
+        return (raw_html or "").strip()
+    items = []
+    for link in links:
+        url = (link.get("url") or "").strip()
+        if not url:
+            continue
+        label = html.escape(_link_label(link))
+        safe_url = html.escape(url, quote=True)
+        items.append(
+            "<li>"
+            f"For more info about {label}, click here: "
+            f'<a href="{safe_url}">{safe_url}</a>'
+            "</li>"
+        )
+    if not items:
+        return (raw_html or "").strip()
+    section = (
+        "<hr />"
+        "<h2>For more info</h2>"
+        "<ul>"
+        + "".join(items)
+        + "</ul>"
+    )
+    return f"{(raw_html or '').strip()}\n{section}".strip()
+
+
 def sanitize_newsletter_html(raw_html: str) -> str:
     soup = BeautifulSoup(raw_html or "", "html.parser")
     allowed_tags = {
