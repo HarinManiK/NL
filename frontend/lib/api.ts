@@ -150,6 +150,12 @@ export type Subscriber = {
   unsubscribed_at?: string | null;
 };
 
+export type SubscribeResponse = {
+  ok: boolean;
+  status: string;
+  confirmation_required: boolean;
+};
+
 async function readError(res: Response): Promise<string> {
   let msg = `HTTP ${res.status}`;
   try {
@@ -307,6 +313,21 @@ export async function deleteAllowedDomain(payload: {
 
 export async function listSubscribers(email: string): Promise<{ count: number; subscribers: Subscriber[] }> {
   const r = await fetch(`${API_BASE}/subscribers?email=${encodeURIComponent(email)}`);
+  if (!r.ok) throw new Error(await readError(r));
+  return r.json();
+}
+
+export async function subscribeToNewsletter(payload: {
+  owner_token: string;
+  subscriber_email: string;
+  source_domain?: string;
+  trusted_email_provided?: boolean;
+}): Promise<SubscribeResponse> {
+  const r = await fetch(`${API_BASE}/subscribe`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
   if (!r.ok) throw new Error(await readError(r));
   return r.json();
 }

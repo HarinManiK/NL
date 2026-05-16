@@ -140,6 +140,7 @@ export default function Home() {
   const [newDomain, setNewDomain] = useState("");
   const [subscribers, setSubscribers] = useState<Subscriber[]>([]);
   const [subscriberCount, setSubscriberCount] = useState(0);
+  const [publicOrigin, setPublicOrigin] = useState("");
 
   // ---- transient state ----
   const [verifying, setVerifying] = useState(false);
@@ -186,6 +187,7 @@ export default function Home() {
     if (saved) {
       setPrompts({ ...DEFAULT_PROMPTS, ...saved });
     }
+    setPublicOrigin(window.location.origin);
     setHydrated(true);
 
     // Warm up the server (e.g. Render free tier sleep)
@@ -827,6 +829,10 @@ export default function Home() {
                       <div>
                         <div className="text-sm font-medium text-zinc-800">Subscribe widget</div>
                         <div className="text-xs text-zinc-500 mt-1">Owner token: {ownerToken || "Save settings to generate one."}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs font-medium text-zinc-600 mb-1">Shareable subscribe link</div>
+                        <CodeBox value={`${publicOrigin || "https://your-site.com"}/subscribe/${ownerToken || "OWNER_PUBLIC_TOKEN"}`} />
                       </div>
                       <CodeBox value={`<div data-nl-owner="${ownerToken || "OWNER_PUBLIC_TOKEN"}"></div>\n<script src="${API_BASE}/embed/subscribe.js"></script>`} />
                       <CodeBox value={`<div\n  data-nl-owner="${ownerToken || "OWNER_PUBLIC_TOKEN"}"\n  data-nl-email="{{ logged_in_user.email }}">\n</div>\n<script src="${API_BASE}/embed/subscribe.js"></script>`} />
