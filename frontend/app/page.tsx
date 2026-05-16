@@ -385,13 +385,13 @@ export default function Home() {
         newsletter_send_time: newsletterSendTime,
         newsletter_timezone: newsletterTimezone,
         newsletter_sending_method: newsletterSendingMethod,
-        ses_smtp_host: sesSmtpHost,
+        ses_smtp_host: sesSmtpHost.trim() || undefined,
         ses_smtp_port: sesSmtpPort,
-        ses_smtp_username: sesSmtpUsername,
-        ses_smtp_password: sesSmtpPassword,
-        ses_verified_sender_email: sesVerifiedSenderEmail,
-        ses_from_name: sesFromName,
-        ses_reply_to_email: sesReplyToEmail,
+        ses_smtp_username: sesSmtpUsername.trim() || undefined,
+        ses_smtp_password: sesSmtpPassword.trim() || undefined,
+        ses_verified_sender_email: sesVerifiedSenderEmail.trim() || undefined,
+        ses_from_name: sesFromName.trim() || undefined,
+        ses_reply_to_email: sesReplyToEmail.trim() || undefined,
       });
       if (saved.owner_token) setOwnerToken(saved.owner_token);
       if (saved.automation_run_reset) {

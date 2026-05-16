@@ -27,7 +27,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import FastAPI, Header, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
-from pydantic import BaseModel, EmailStr, Field, HttpUrl
+from pydantic import BaseModel, EmailStr, Field, HttpUrl, field_validator
 import requests
 
 from db import (
@@ -185,6 +185,21 @@ class SettingsReq(BaseModel):
     ses_verified_sender_email: Optional[EmailStr] = None
     ses_from_name: Optional[str] = None
     ses_reply_to_email: Optional[EmailStr] = None
+
+    @field_validator(
+        "ses_smtp_host",
+        "ses_smtp_username",
+        "ses_smtp_password",
+        "ses_verified_sender_email",
+        "ses_from_name",
+        "ses_reply_to_email",
+        mode="before",
+    )
+    @classmethod
+    def blank_optional_strings_to_none(cls, value):
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
 
 class ManualPostReq(BaseModel):
