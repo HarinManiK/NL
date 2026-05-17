@@ -47,8 +47,10 @@ from newsletter import (
     filter_links_for_body,
     sanitize_newsletter_html,
     send_html_email_smtp,
+    send_html_email_ses_api,
     strip_links_text,
     useful_links_block,
+    verify_ses_api_access,
     verify_smtp_login,
 )
 
@@ -325,23 +327,24 @@ def _smtp_config_from_settings(settings: dict) -> dict:
     method = (settings.get("newsletter_sending_method") or "mailbox").lower()
     if method == "ses":
         required = [
-            "ses_smtp_host", "ses_smtp_port", "ses_smtp_username",
+            "ses_smtp_host", "ses_smtp_username",
             "ses_smtp_password", "ses_verified_sender_email",
         ]
         missing = [name for name in required if not settings.get(name)]
         if missing:
-            raise RuntimeError("Amazon SES SMTP settings are incomplete.")
+            raise RuntimeError("Amazon SES API settings are incomplete.")
         return {
-            "host": settings["ses_smtp_host"],
-            "port": int(settings["ses_smtp_port"]),
-            "username": settings["ses_smtp_username"],
-            "password": settings["ses_smtp_password"],
+            "method": "ses_api",
+            "region": settings["ses_smtp_host"],
+            "access_key_id": settings["ses_smtp_username"],
+            "secret_access_key": settings["ses_smtp_password"],
             "sender_email": settings["ses_verified_sender_email"],
             "sender_name": settings.get("ses_from_name") or None,
             "reply_to": settings.get("ses_reply_to_email") or settings.get("email"),
         }
 
     return {
+        "method": "smtp",
         "host": "smtp.gmail.com",
         "port": 465,
         "username": settings["email"],
@@ -354,6 +357,20 @@ def _smtp_config_from_settings(settings: dict) -> dict:
 
 def _send_owner_email(settings: dict, recipient: str, subject: str, html_body: str) -> None:
     cfg = _smtp_config_from_settings(settings)
+    if cfg["method"] == "ses_api":
+        send_html_email_ses_api(
+            region=cfg["region"],
+            access_key_id=cfg["access_key_id"],
+            secret_access_key=cfg["secret_access_key"],
+            sender_email=cfg["sender_email"],
+            sender_name=cfg.get("sender_name"),
+            reply_to=cfg.get("reply_to"),
+            recipient_email=recipient,
+            subject=subject,
+            html_body=html_body,
+        )
+        return
+
     send_html_email_smtp(
         host=cfg["host"],
         port=int(cfg["port"]),
@@ -370,6 +387,14 @@ def _send_owner_email(settings: dict, recipient: str, subject: str, html_body: s
 
 def _verify_newsletter_sender(settings: dict) -> None:
     cfg = _smtp_config_from_settings(settings)
+    if cfg["method"] == "ses_api":
+        verify_ses_api_access(
+            region=cfg["region"],
+            access_key_id=cfg["access_key_id"],
+            secret_access_key=cfg["secret_access_key"],
+        )
+        return
+
     verify_smtp_login(
         host=cfg["host"],
         port=int(cfg["port"]),

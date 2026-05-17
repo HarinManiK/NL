@@ -134,7 +134,7 @@ export default function Home() {
   const [newsletterSendTime, setNewsletterSendTime] = useState("07:00");
   const [newsletterTimezone, setNewsletterTimezone] = useState("UTC");
   const [newsletterSendingMethod, setNewsletterSendingMethod] = useState<"mailbox" | "ses">("mailbox");
-  const [sesSmtpHost, setSesSmtpHost] = useState("");
+  const [sesSmtpHost, setSesSmtpHost] = useState("us-east-1");
   const [sesSmtpPort, setSesSmtpPort] = useState(587);
   const [sesSmtpUsername, setSesSmtpUsername] = useState("");
   const [sesSmtpPassword, setSesSmtpPassword] = useState("");
@@ -221,7 +221,7 @@ export default function Home() {
         setNewsletterSendTime(s.newsletter_send_time || "07:00");
         setNewsletterTimezone(s.newsletter_timezone || "UTC");
         setNewsletterSendingMethod(s.newsletter_sending_method || "mailbox");
-        setSesSmtpHost(s.ses_smtp_host || "");
+        setSesSmtpHost(s.ses_smtp_host || "us-east-1");
         setSesSmtpPort(s.ses_smtp_port || 587);
         setSesSmtpUsername(s.ses_smtp_username || "");
         setSesSmtpPassword(s.ses_smtp_password || "");
@@ -825,25 +825,26 @@ export default function Home() {
                         </Field>
                         <Field label="Sending method">
                           <select value={newsletterSendingMethod} onChange={e => setNewsletterSendingMethod(e.target.value as "mailbox" | "ses")} className={inputCls}>
-                            <option value="mailbox">Connected mailbox</option>
-                            <option value="ses">Amazon SES SMTP</option>
+                            <option value="mailbox">Connected mailbox SMTP</option>
+                            <option value="ses">Amazon SES API</option>
                           </select>
                         </Field>
+                        {newsletterSendingMethod === "mailbox" && (
+                          <div className="sm:col-span-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                            Connected mailbox sending uses SMTP and can be blocked by Render. Use Amazon SES API for public subscriber emails.
+                          </div>
+                        )}
                         {newsletterSendingMethod === "ses" && (
                           <>
-                            <Field label="SES SMTP host">
+                            <Field label="AWS SES region">
                               <input value={sesSmtpHost} onChange={e => setSesSmtpHost(e.target.value)}
-                                     placeholder="email-smtp.us-east-1.amazonaws.com" className={inputCls} />
+                                     placeholder="us-east-1" className={inputCls} />
                             </Field>
-                            <Field label="SES SMTP port">
-                              <input type="number" value={sesSmtpPort} onChange={e => setSesSmtpPort(Number(e.target.value) || 587)}
-                                     className={inputCls} />
-                            </Field>
-                            <Field label="SES SMTP username">
+                            <Field label="AWS access key ID">
                               <input value={sesSmtpUsername} onChange={e => setSesSmtpUsername(e.target.value)}
                                      className={inputCls} />
                             </Field>
-                            <Field label="SES SMTP password">
+                            <Field label="AWS secret access key">
                               <input type="password" value={sesSmtpPassword} onChange={e => setSesSmtpPassword(e.target.value)}
                                      className={inputCls} />
                             </Field>

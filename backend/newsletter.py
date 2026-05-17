@@ -578,6 +578,57 @@ def send_html_email_smtp(
         smtp.send_message(msg)
 
 
+def _boto3_client(service_name: str, *, region: str, access_key_id: str, secret_access_key: str):
+    try:
+        import boto3
+    except ImportError as e:
+        raise RuntimeError("Amazon SES API support is not installed on the server. Redeploy after installing boto3.") from e
+    return boto3.client(
+        service_name,
+        region_name=region,
+        aws_access_key_id=access_key_id,
+        aws_secret_access_key=secret_access_key,
+    )
+
+
+def send_html_email_ses_api(
+    *,
+    region: str,
+    access_key_id: str,
+    secret_access_key: str,
+    sender_email: str,
+    recipient_email: str,
+    subject: str,
+    html_body: str,
+    sender_name: Optional[str] = None,
+    reply_to: Optional[str] = None,
+) -> None:
+    client = _boto3_client(
+        "sesv2",
+        region=region,
+        access_key_id=access_key_id,
+        secret_access_key=secret_access_key,
+    )
+    from_address = f"{sender_name} <{sender_email}>" if sender_name else sender_email
+    try:
+        client.send_email(
+            FromEmailAddress=from_address,
+            Destination={"ToAddresses": [recipient_email]},
+            ReplyToAddresses=[reply_to] if reply_to else [],
+            Content={
+                "Simple": {
+                    "Subject": {"Data": subject, "Charset": "UTF-8"},
+                    "Body": {
+                        "Text": {"Data": html_to_text(html_body) or subject, "Charset": "UTF-8"},
+                        "Html": {"Data": html_body, "Charset": "UTF-8"},
+                    },
+                }
+            },
+        )
+    except Exception as e:
+        raise RuntimeError(f"Amazon SES API send failed in {region}: {e}") from e
+
+
 def verify_smtp_login(*, host: str, port: int, username: str, password: str) -> None:
     try:
         if port == 465:
@@ -596,3 +647,19 @@ def verify_smtp_login(*, host: str, port: int, username: str, password: str) -> 
         raise RuntimeError(f"SMTP login rejected for {username}. Server said: {detail[:300]}") from e
     except Exception as e:
         raise RuntimeError(f"Could not log in to SMTP server {host}:{port} for {username}: {e}") from e
+
+
+def verify_ses_api_access(*, region: str, access_key_id: str, secret_access_key: str) -> None:
+    client = _boto3_client(
+        "sesv2",
+        region=region,
+        access_key_id=access_key_id,
+        secret_access_key=secret_access_key,
+    )
+    try:
+        client.get_account()
+    except Exception as e:
+        raise RuntimeError(
+            f"Amazon SES API check failed in {region}. Make sure the IAM key has SES access "
+            f"and the sender email/domain is verified. Server said: {e}"
+        ) from e
