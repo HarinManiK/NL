@@ -15,6 +15,7 @@ import {
   addAllowedDomain,
   deleteAllowedDomain,
   listSubscribers,
+  sendNewsletter,
   type Prompts,
   type RunDetail,
   type RunListItem,
@@ -160,6 +161,8 @@ export default function Home() {
   const [saving, setSaving] = useState(false);
   const [posting, setPosting] = useState(false);
   const [postSuccess, setPostSuccess] = useState(false);
+  const [newsletterSending, setNewsletterSending] = useState(false);
+  const [newsletterSendMsg, setNewsletterSendMsg] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
 
   // ---- view + history ----
@@ -441,6 +444,39 @@ export default function Home() {
     }
   }
 
+  async function onSendNewsletter(runId: string) {
+    if (!email || !appPassword) {
+      setError("Enter email and app password first.");
+      setShowSettings(true);
+      return;
+    }
+    if (!runId) {
+      setError("Generated newsletter run is missing. Generate the newsletter again.");
+      return;
+    }
+
+    setNewsletterSending(true);
+    setNewsletterSendMsg(null);
+    setError(null);
+    try {
+      const res = await sendNewsletter({
+        email,
+        app_password: appPassword,
+        run_id: runId,
+      });
+      if (res.skipped) {
+        setNewsletterSendMsg(`Newsletter not sent: ${res.reason || "skipped"}.`);
+      } else {
+        setNewsletterSendMsg(`Newsletter sent to ${res.sent}/${res.queued} subscribed email(s). Failed: ${res.failed}.`);
+      }
+      refreshNewsletterAdmin();
+    } catch (e: any) {
+      setError(`Newsletter send failed: ${e.message || "Unknown error"}`);
+    } finally {
+      setNewsletterSending(false);
+    }
+  }
+
   async function onAddDomain() {
     const domain = newDomain.trim();
     if (!email || !appPassword || !domain) return;
@@ -481,6 +517,7 @@ export default function Home() {
   async function onRun() {
     setError(null);
     setResult(null);
+    setNewsletterSendMsg(null);
     setProgress([]);
     if (!email || !appPassword) {
       setError("Enter email and app password first.");
@@ -932,6 +969,9 @@ export default function Home() {
               onPost={(txt) => onManualPost(txt)}
               posting={posting}
               postSuccess={postSuccess}
+              onSendNewsletter={onSendNewsletter}
+              newsletterSending={newsletterSending}
+              newsletterSendMsg={newsletterSendMsg}
             />
           )}
         </>
@@ -967,6 +1007,9 @@ export default function Home() {
                 onPost={(txt) => onManualPost(txt)}
                 posting={posting}
                 postSuccess={postSuccess}
+                onSendNewsletter={onSendNewsletter}
+                newsletterSending={newsletterSending}
+                newsletterSendMsg={newsletterSendMsg}
               />
             </div>
           ) : historyDetailLoading ? (
@@ -1220,6 +1263,7 @@ function ProgressRow({ p }: { p: ProgressLine }) {
 
 function ResultTabs({
   result, active, setActive, onCopy, onPost, posting, postSuccess,
+  onSendNewsletter, newsletterSending, newsletterSendMsg,
 }: {
   result: CurrentResult;
   active: "digest" | "story" | "linkedin" | "newsletter";
@@ -1228,6 +1272,9 @@ function ResultTabs({
   onPost?: (text: string) => void;
   posting?: boolean;
   postSuccess?: boolean;
+  onSendNewsletter?: (runId: string) => void;
+  newsletterSending?: boolean;
+  newsletterSendMsg?: string | null;
 }) {
   const [copied, setCopied] = useState(false);
   const tabText =
@@ -1278,6 +1325,26 @@ function ResultTabs({
           </div>
           <div className="rounded-md border border-zinc-200 bg-white p-4"
                dangerouslySetInnerHTML={{ __html: result.newsletter_html || "" }} />
+          {onSendNewsletter && result.newsletter_html && (
+            <div className="mt-4 rounded-md border border-zinc-100 bg-zinc-50 px-3 py-3">
+              <button
+                type="button"
+                onClick={() => onSendNewsletter(result.run_id)}
+                disabled={newsletterSending}
+                className="w-full rounded-md bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+              >
+                {newsletterSending ? "Sending newsletter..." : "Send newsletter"}
+              </button>
+              {newsletterSendMsg && (
+                <p className="mt-2 text-xs font-medium text-emerald-700">{newsletterSendMsg}</p>
+              )}
+              {!newsletterSendMsg && !newsletterSending && (
+                <p className="mt-2 text-xs text-zinc-500">
+                  Sends this generated newsletter to confirmed subscribers only.
+                </p>
+              )}
+            </div>
+          )}
         </div>
       ) : (
         <div className="p-5 text-sm leading-6 text-zinc-800 font-sans">

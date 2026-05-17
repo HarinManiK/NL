@@ -166,6 +166,16 @@ export type SubscribeResponse = {
   ok: boolean;
   status: string;
   confirmation_required: boolean;
+  manual_email_required?: boolean;
+};
+
+export type SendNewsletterResponse = {
+  ok: boolean;
+  queued: number;
+  sent: number;
+  failed: number;
+  skipped: boolean;
+  reason?: string;
 };
 
 async function readError(res: Response): Promise<string> {
@@ -336,6 +346,20 @@ export async function subscribeToNewsletter(payload: {
   trusted_email_provided?: boolean;
 }): Promise<SubscribeResponse> {
   const r = await fetch(`${API_BASE}/subscribe`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) throw new Error(await readError(r));
+  return r.json();
+}
+
+export async function sendNewsletter(payload: {
+  email: string;
+  app_password: string;
+  run_id: string;
+}): Promise<SendNewsletterResponse> {
+  const r = await fetch(`${API_BASE}/send-newsletter`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),

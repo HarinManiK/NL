@@ -229,6 +229,14 @@ class SubscribeReq(BaseModel):
     trusted_email_provided: bool = False
 
 
+class SendNewsletterReq(BaseModel):
+    email: EmailStr
+    app_password: str
+    run_id: str
+    imap_server: str = "imap.gmail.com"
+    imap_port: int = 993
+
+
 class TestNewsletterReq(BaseModel):
     email: EmailStr
     app_password: str
@@ -1253,6 +1261,21 @@ def subscribe_widget_js():
     box.appendChild(button);
     box.appendChild(msg);
     el.appendChild(box);
+    function switchToManualEmail() {
+      providedEmail = "";
+      input.value = "";
+      input.readOnly = false;
+      button.textContent = "Subscribe";
+      msg.textContent = "Enter your email address to receive a confirmation email.";
+    }
+    if (providedEmail && owner) {
+      fetch(api + "/subscribe/embed-policy?owner_token=" + encodeURIComponent(owner) + "&source_domain=" + encodeURIComponent(window.location.hostname))
+        .then(function (r) { return r.ok ? r.json() : {trusted_email_allowed: false}; })
+        .then(function (data) {
+          if (!data.trusted_email_allowed) switchToManualEmail();
+        })
+        .catch(function () { switchToManualEmail(); });
+    }
     button.addEventListener("click", function () {
       var email = (input.value || "").trim();
       if (!owner || !email) {
@@ -1276,6 +1299,11 @@ def subscribe_widget_js():
           return data;
         });
       }).then(function (data) {
+        if (data.manual_email_required) {
+          switchToManualEmail();
+          button.disabled = false;
+          return;
+        }
         msg.textContent = data.confirmation_required
           ? "Check your email to confirm the subscription."
           : "Subscribed.";
@@ -1304,6 +1332,13 @@ def subscribe(req: SubscribeReq):
             and source_domain
             and _subscription_allowed_without_confirmation(owner_email, source_domain)
         )
+        if req.trusted_email_provided and not direct:
+            return {
+                "ok": True,
+                "status": "manual_email_required",
+                "confirmation_required": True,
+                "manual_email_required": True,
+            }
         confirmation_token = _new_action_token()
         unsubscribe_token = _new_action_token()
         status = "subscribed" if direct else "pending"
@@ -1325,11 +1360,32 @@ def subscribe(req: SubscribeReq):
             "ok": True,
             "status": row.get("status", status),
             "confirmation_required": not direct,
+            "manual_email_required": False,
         }
     except HTTPException:
         raise
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e))
+    except DBError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/subscribe/embed-policy")
+def subscribe_embed_policy(owner_token: str = Query(...), source_domain: Optional[str] = Query(default=None)):
+    try:
+        settings = get_settings_by_owner_token(owner_token)
+        if not settings:
+            raise HTTPException(status_code=404, detail="Newsletter owner not found.")
+        owner_email = settings["email"]
+        normalized_source = _normalize_domain(source_domain) if source_domain else None
+        return {
+            "ok": True,
+            "trusted_email_allowed": bool(
+                normalized_source and _subscription_allowed_without_confirmation(owner_email, normalized_source)
+            ),
+        }
+    except HTTPException:
+        raise
     except DBError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1377,6 +1433,33 @@ def send_test_newsletter(req: TestNewsletterReq):
         settings["app_password"] = req.app_password
         _send_owner_email(settings, str(req.recipient_email), req.subject, sanitize_newsletter_html(req.html))
         return {"ok": True}
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except DBError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/send-newsletter")
+def send_newsletter(req: SendNewsletterReq):
+    try:
+        verify_imap(req.email, req.app_password, req.imap_server, req.imap_port)
+        settings = get_settings(str(req.email))
+        if not settings:
+            raise HTTPException(status_code=404, detail="Owner settings not found. Save settings first.")
+        run = get_run(req.run_id, str(req.email))
+        if not run:
+            raise HTTPException(status_code=404, detail="Generated newsletter run not found.")
+        if not (run.get("newsletter_html") or "").strip():
+            raise HTTPException(status_code=400, detail="This run does not have a generated newsletter email.")
+        settings["app_password"] = req.app_password
+        result = _send_newsletter_to_subscribers(settings, {
+            "id": run.get("id"),
+            "newsletter_subject": run.get("newsletter_subject") or "Newsletter update",
+            "newsletter_html": run.get("newsletter_html") or "",
+        })
+        return {"ok": True, **result}
+    except HTTPException:
+        raise
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e))
     except DBError as e:
