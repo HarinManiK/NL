@@ -1,5 +1,17 @@
+const DEFAULT_PROD_API_BASE = "https://newsletter-digest-api.onrender.com";
+
+function defaultApiBase(): string {
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    if (host === "localhost" || host === "127.0.0.1") {
+      return "http://localhost:8000";
+    }
+  }
+  return DEFAULT_PROD_API_BASE;
+}
+
 export const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") || "http://localhost:8000";
+  process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") || defaultApiBase();
 
 export type Prompts = {
   filter: string;
