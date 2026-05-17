@@ -6,7 +6,7 @@ import smtplib
 import ssl
 from dataclasses import asdict
 from email.message import EmailMessage
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlencode, urlparse, urlunparse
 
 from bs4 import BeautifulSoup
@@ -22,6 +22,8 @@ JUNK_LINK_WORDS = (
     "instagram", "youtube", "tiktok", "discord", "slack", "copyright",
     "facebook.com", "instagram.com", "youtube.com", "tiktok.com",
     "twitter.com", "x.com", "linkedin.com/in", "linkedin.com/company",
+    "control your recommendations", "become a member", "work at medium",
+    "privacy-policy", "terms-of-service",
 )
 
 GENERIC_LINK_TEXT = {
@@ -31,6 +33,37 @@ GENERIC_LINK_TEXT = {
     "watch now", "see more", "explore", "explore now", "check it out",
     "continue reading", "full article", "more details", "details",
 }
+
+BAD_LABEL_PATTERNS = (
+    r"^(answered|updated|posted)\s+\w+",
+    r"^stories for\b",
+    r"\bin your feed\b",
+    r"\bcontrol your recommendations\b",
+    r"\bbecome a member\b",
+    r"\bmanage preferences\b",
+    r"\bemail preferences\b",
+    r"\bprivacy policy\b",
+    r"\bterms of service\b",
+    r"\bfollowers\b",
+    r"\btype=social\b",
+    r"\bpreference=\d+\b",
+    r"\btribe_item_ids\b",
+    r"\buid=",
+    r"[-_]{6,}",
+    r"%[0-9a-f]{2}",
+)
+
+STOPWORDS = {
+    "about", "after", "again", "also", "because", "before", "being", "between",
+    "could", "does", "doing", "from", "have", "into", "just", "more", "most",
+    "much", "only", "other", "over", "same", "should", "some", "than", "that",
+    "their", "them", "then", "there", "these", "they", "this", "through", "what",
+    "when", "where", "which", "while", "with", "without", "would", "your",
+    "answered", "updated", "posted", "october", "november", "december", "january",
+    "february", "march", "april", "june", "july", "august", "september",
+}
+
+MAX_LINKS_PER_OUTPUT = 20
 
 TRACKING_QUERY_KEYS = (
     "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
@@ -110,8 +143,82 @@ def _clean_label_text(value: str) -> str:
     value = html.unescape(value or "")
     value = strip_links_text(value)
     value = re.sub(r"\b(click here|read more|learn more|view all|apply now|register now)\b", "", value, flags=re.IGNORECASE)
+    value = re.sub(r"\s+", " ", value)
+    value = re.sub(r"\s+([.,;:!?])", r"\1", value)
+    value = re.sub(r"^(question|answer from)\s*:\s*", "", value, flags=re.IGNORECASE)
     value = re.sub(r"\s+", " ", value).strip(" -:|\t\r\n")
     return value
+
+
+def _tokens(value: str) -> List[str]:
+    tokens = re.findall(r"[a-z0-9][a-z0-9']*", (value or "").lower())
+    return [token for token in tokens if len(token) >= 3 and token not in STOPWORDS]
+
+
+def _label_key(value: str) -> str:
+    return " ".join(_tokens(value))[:180]
+
+
+def _word_count(value: str) -> int:
+    return len(re.findall(r"[A-Za-z0-9][A-Za-z0-9']*", value or ""))
+
+
+def _looks_like_bad_label(label: str, url: str) -> bool:
+    normalized = re.sub(r"\s+", " ", (label or "").strip())
+    lower = normalized.lower()
+    if not normalized or len(normalized) < 6:
+        return True
+    if len(normalized) > 220:
+        return True
+    if any(re.search(pattern, lower, re.IGNORECASE) for pattern in BAD_LABEL_PATTERNS):
+        return True
+    if lower in {"medium", "quora", "read more", "view all", "learn more"}:
+        return True
+    if lower.count("/") >= 2 or lower.count("&") >= 2:
+        return True
+    if sum(1 for ch in normalized if ch in "%=&") >= 3:
+        return True
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    path = parsed.path.lower()
+    if "quora.com" in host and path.startswith("/qemail/tc"):
+        return "?" not in normalized
+    if "medium." in host or host.endswith("medium.com"):
+        if lower.startswith(("stories for ", "control your ", "become a ", "work at ")):
+            return True
+        if "," in normalized and _word_count(normalized) <= 5:
+            return True
+        if _word_count(normalized) <= 2 and "?" not in normalized:
+            return True
+    return False
+
+
+def _looks_like_content_label(label: str, url: str) -> bool:
+    if _looks_like_bad_label(label, url):
+        return False
+    lower = label.lower()
+    words = _word_count(label)
+    if "?" in label and words >= 3:
+        return True
+    if re.search(r"\b(apply|register|join|download|watch|attend|submit|claim|explore|read)\b", lower) and words >= 3:
+        return True
+    if words >= 4:
+        return True
+    if len(label) >= 28 and words >= 4:
+        return True
+    return False
+
+
+def _best_label(text: str, context: str, subject: str, url: str) -> str:
+    candidates = [
+        _clean_label_text(text),
+        _clean_label_text(context),
+        _clean_label_text(subject),
+    ]
+    for candidate in candidates:
+        if candidate and not _is_generic_link_text(candidate) and _looks_like_content_label(candidate, url):
+            return candidate
+    return ""
 
 
 def _is_useful_link(url: str, text: str, context: str) -> bool:
@@ -131,6 +238,7 @@ def _is_useful_link(url: str, text: str, context: str) -> bool:
 def extract_useful_links(records: Iterable[MailRecord]) -> List[dict]:
     useful: List[dict] = []
     seen: set[str] = set()
+    seen_labels: set[str] = set()
     for rec in records:
         for link in rec.links:
             url = _unwrap_redirect_url(link.url)
@@ -142,12 +250,18 @@ def extract_useful_links(records: Iterable[MailRecord]) -> List[dict]:
                 continue
             if not url or not _is_useful_link(url, text, context):
                 continue
+            label = _best_label(text, context, rec.subject, url)
+            if not label:
+                continue
             key = url.lower()
-            if key in seen:
+            label_key = _label_key(label)
+            if key in seen or not label_key or label_key in seen_labels:
                 continue
             seen.add(key)
+            seen_labels.add(label_key)
             useful.append({
                 "url": url,
+                "label": label[:220],
                 "text": text[:300],
                 "source_sender": rec.sender_name,
                 "source_subject": rec.subject,
@@ -171,21 +285,84 @@ def useful_links_block(links: List[dict]) -> str:
 
 
 def _link_label(link: dict) -> str:
-    text = _clean_label_text(link.get("text") or "")
-    context = _clean_label_text(link.get("nearby_text") or "")
-    subject = _clean_label_text(link.get("source_subject") or "")
-    if text and not _is_generic_link_text(text):
-        label = text
-    elif context:
-        label = context
-    elif subject:
-        label = subject
+    saved_label = _clean_label_text(link.get("label") or "")
+    if saved_label:
+        label = saved_label
     else:
-        label = "this update"
+        text = _clean_label_text(link.get("text") or "")
+        context = _clean_label_text(link.get("nearby_text") or "")
+        subject = _clean_label_text(link.get("source_subject") or "")
+        if text and not _is_generic_link_text(text):
+            label = text
+        elif context:
+            label = context
+        elif subject:
+            label = subject
+        else:
+            label = "this update"
     label = re.sub(r"\s+", " ", label).strip()
+    if label.lower().startswith("for ") and "?" in label:
+        label = label[4:].strip()
     if len(label) > 120:
         label = label[:117].rstrip() + "..."
     return label
+
+
+def _body_match_text(value: str) -> str:
+    raw = value or ""
+    if re.search(r"<[a-zA-Z][^>]*>", raw):
+        raw = BeautifulSoup(raw, "html.parser").get_text(" ", strip=True)
+    return strip_links_text(raw)
+
+
+def _link_relevance(link: dict, body_text: str, body_tokens: set[str]) -> int:
+    label = _link_label(link)
+    label_tokens = _tokens(label)
+    if not label_tokens:
+        return 0
+
+    body_lower = body_text.lower()
+    label_lower = re.sub(r"\s+", " ", label.lower()).strip()
+    overlap = [token for token in set(label_tokens) if token in body_tokens]
+
+    score = len(overlap)
+    if len(label_lower) >= 14 and label_lower in body_lower:
+        score += 8
+    elif len(label_lower) >= 24 and label_lower[:80] in body_lower:
+        score += 5
+    if "?" in label and len(overlap) >= 2:
+        score += 3
+    if re.search(r"\b(apply|register|join|download|watch|attend|submit|claim)\b", label_lower):
+        score += 2
+    return score
+
+
+def filter_links_for_body(links: List[dict], body: str, max_links: int = MAX_LINKS_PER_OUTPUT) -> List[dict]:
+    body_text = _body_match_text(body)
+    body_tokens = set(_tokens(body_text))
+    if not links or not body_tokens:
+        return []
+
+    ranked: List[Tuple[int, int, dict]] = []
+    seen_labels: set[str] = set()
+    seen_urls: set[str] = set()
+    for index, link in enumerate(links):
+        url = (link.get("url") or "").strip().lower()
+        label = _link_label(link)
+        label_key = _label_key(label)
+        if not url or not label_key or label_key in seen_labels or url in seen_urls:
+            continue
+        score = _link_relevance(link, body_text, body_tokens)
+        label_tokens = set(_tokens(label))
+        overlap_count = len(label_tokens & body_tokens)
+        if score < 2 and overlap_count < min(2, len(label_tokens)):
+            continue
+        seen_labels.add(label_key)
+        seen_urls.add(url)
+        ranked.append((score, index, link))
+
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    return [link for _, _, link in ranked[:max_links]]
 
 
 def format_links_text(links: List[dict]) -> str:
@@ -222,8 +399,8 @@ def append_links_html(raw_html: str, links: List[dict]) -> str:
         safe_url = html.escape(url, quote=True)
         items.append(
             "<li>"
-            f"For more info about {label}, click here: "
-            f'<a href="{safe_url}">click here</a>'
+            f"For more info about {label}, "
+            f'<a href="{safe_url}" style="color:#16a34a;font-weight:600;text-decoration:underline;">click here</a>'
             "</li>"
         )
     if not items:
@@ -312,7 +489,7 @@ def sanitize_newsletter_html(raw_html: str) -> str:
         "strong", "b", "em", "i", "a", "blockquote", "div", "span",
     }
     allowed_attrs = {
-        "a": {"href", "title"},
+        "a": {"href", "title", "style"},
         "div": {"style"},
         "span": {"style"},
         "p": {"style"},

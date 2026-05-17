@@ -44,6 +44,7 @@ from newsletter import (
     append_links_html,
     append_links_text,
     extract_useful_links,
+    filter_links_for_body,
     sanitize_newsletter_html,
     send_html_email_smtp,
     strip_links_text,
@@ -597,8 +598,9 @@ def _generate_run(
         aggregate = aggregate[:80000] + "\n\n[...aggregate truncated to fit context...]"
 
     digest_body = _clean_generated_text(chat(prompts.digest, aggregate, max_tokens=8192, temperature=0.4))
-    digest = append_links_text(digest_body, useful_links)
-    optional_input = digest_body + _link_context_block(useful_links)
+    digest_links = filter_links_for_body(useful_links, digest_body)
+    digest = append_links_text(digest_body, digest_links)
+    optional_input = digest_body + _link_context_block(digest_links)
     story = ""
     linkedin = ""
     newsletter_subject = ""
@@ -615,18 +617,18 @@ def _generate_run(
             )
         for name, future in futures.items():
             if name == "story":
-                story = append_links_text(_clean_generated_text(future.result()), useful_links)
+                story_body = _clean_generated_text(future.result())
+                story = append_links_text(story_body, filter_links_for_body(digest_links, story_body))
             elif name == "linkedin":
-                linkedin = append_links_text(_clean_generated_text(future.result()), useful_links)
+                linkedin_body = _clean_generated_text(future.result())
+                linkedin = append_links_text(linkedin_body, filter_links_for_body(digest_links, linkedin_body))
             elif name == "newsletter_subject":
                 newsletter_subject = future.result().strip().strip('"')
     if newsletter_enabled:
-        newsletter_html = append_links_html(
-            sanitize_newsletter_html(
-                chat(prompts.newsletter_html, optional_input, max_tokens=8192, temperature=0.5)
-            ),
-            useful_links,
+        newsletter_body = sanitize_newsletter_html(
+            chat(prompts.newsletter_html, optional_input, max_tokens=8192, temperature=0.5)
         )
+        newsletter_html = append_links_html(newsletter_body, filter_links_for_body(digest_links, newsletter_body))
 
     elapsed = round(time.time() - started, 1)
     row = {
@@ -644,7 +646,7 @@ def _generate_run(
         "newsletter_enabled": newsletter_enabled,
         "newsletter_subject": newsletter_subject,
         "newsletter_html": newsletter_html,
-        "useful_links": useful_links,
+        "useful_links": digest_links,
         "filter_prompt": prompts.filter,
         "digest_prompt": prompts.digest,
         "story_prompt": prompts.story,
@@ -851,14 +853,15 @@ def run_stream(req: RunReq):
             yield _sse({"type": "step", "name": "digest", "status": "start"})
             try:
                 digest_body = _clean_generated_text(chat(req.prompts.digest, aggregate, max_tokens=8192, temperature=0.4))
-                digest = append_links_text(digest_body, useful_links)
+                digest_links = filter_links_for_body(useful_links, digest_body)
+                digest = append_links_text(digest_body, digest_links)
             except LLMError as e:
                 yield _sse({"type": "error", "message": f"Digest step failed: {e}"})
                 return
             yield _sse({"type": "step", "name": "digest", "status": "done", "text": digest})
 
             # 5+) Optional outputs
-            optional_input = digest_body + _link_context_block(useful_links)
+            optional_input = digest_body + _link_context_block(digest_links)
             story = ""
             linkedin = ""
             newsletter_subject = ""
@@ -889,18 +892,20 @@ def run_stream(req: RunReq):
 
                     for name, future in futures.items():
                         if name == "story":
-                            story = append_links_text(_clean_generated_text(future.result()), useful_links)
+                            story_body = _clean_generated_text(future.result())
+                            story = append_links_text(story_body, filter_links_for_body(digest_links, story_body))
                         elif name == "linkedin":
-                            linkedin = append_links_text(_clean_generated_text(future.result()), useful_links)
+                            linkedin_body = _clean_generated_text(future.result())
+                            linkedin = append_links_text(linkedin_body, filter_links_for_body(digest_links, linkedin_body))
                         elif name == "newsletter_subject":
                             newsletter_subject = future.result().strip().strip('"')
 
                 if req.newsletter_enabled:
+                    newsletter_body = sanitize_newsletter_html(
+                        chat(req.prompts.newsletter_html, optional_input, max_tokens=8192, temperature=0.5)
+                    )
                     newsletter_html = append_links_html(
-                        sanitize_newsletter_html(
-                            chat(req.prompts.newsletter_html, optional_input, max_tokens=8192, temperature=0.5)
-                        ),
-                        useful_links,
+                        newsletter_body, filter_links_for_body(digest_links, newsletter_body)
                     )
 
             except LLMError as e:
@@ -937,7 +942,7 @@ def run_stream(req: RunReq):
                     "newsletter_enabled": req.newsletter_enabled,
                     "newsletter_subject": newsletter_subject,
                     "newsletter_html": newsletter_html,
-                    "useful_links": useful_links,
+                    "useful_links": digest_links,
                     "filter_prompt": req.prompts.filter,
                     "digest_prompt": req.prompts.digest,
                     "story_prompt": req.prompts.story,
@@ -961,7 +966,7 @@ def run_stream(req: RunReq):
                         "linkedin": linkedin,
                         "newsletter_subject": newsletter_subject,
                         "newsletter_html": newsletter_html,
-                        "useful_links": useful_links,
+                        "useful_links": digest_links,
                         "elapsed_seconds": elapsed})
         except RuntimeError as e:
             yield _sse({"type": "error", "message": str(e)})
