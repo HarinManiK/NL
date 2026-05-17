@@ -20,7 +20,17 @@ JUNK_LINK_WORDS = (
     "update preferences", "subscription preferences", "preferences center",
     "forward to a friend", "facebook", "twitter", "x.com", "linkedin.com/company",
     "instagram", "youtube", "tiktok", "discord", "slack", "copyright",
+    "facebook.com", "instagram.com", "youtube.com", "tiktok.com",
+    "twitter.com", "x.com", "linkedin.com/in", "linkedin.com/company",
 )
+
+GENERIC_LINK_TEXT = {
+    "", "read", "read more", "read full story", "learn more", "click here",
+    "here", "view", "view more", "view all", "open", "open link", "link",
+    "apply", "apply now", "register", "register now", "join now", "watch",
+    "watch now", "see more", "explore", "explore now", "check it out",
+    "continue reading", "full article", "more details", "details",
+}
 
 TRACKING_QUERY_KEYS = (
     "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
@@ -90,6 +100,20 @@ def _is_unresolved_tracking_url(url: str) -> bool:
     return False
 
 
+def _is_generic_link_text(text: str) -> bool:
+    normalized = re.sub(r"[^a-z0-9 ]+", " ", (text or "").lower())
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized in GENERIC_LINK_TEXT or len(normalized) <= 2
+
+
+def _clean_label_text(value: str) -> str:
+    value = html.unescape(value or "")
+    value = strip_links_text(value)
+    value = re.sub(r"\b(click here|read more|learn more|view all|apply now|register now)\b", "", value, flags=re.IGNORECASE)
+    value = re.sub(r"\s+", " ", value).strip(" -:|\t\r\n")
+    return value
+
+
 def _is_useful_link(url: str, text: str, context: str) -> bool:
     haystack = f"{url} {text} {context}".lower()
     if any(word in haystack for word in JUNK_LINK_WORDS):
@@ -113,7 +137,8 @@ def extract_useful_links(records: Iterable[MailRecord]) -> List[dict]:
             raw_normalized = _normalize_url(html.unescape((link.url or "").strip()))
             text = re.sub(r"\s+", " ", link.text or "").strip()
             context = re.sub(r"\s+", " ", link.context or "").strip()
-            if url and raw_normalized and url == raw_normalized and _is_unresolved_tracking_url(url):
+            unresolved_tracking = bool(url and raw_normalized and url == raw_normalized and _is_unresolved_tracking_url(url))
+            if unresolved_tracking and _is_generic_link_text(text) and len(_clean_label_text(context)) < 20:
                 continue
             if not url or not _is_useful_link(url, text, context):
                 continue
@@ -146,12 +171,17 @@ def useful_links_block(links: List[dict]) -> str:
 
 
 def _link_label(link: dict) -> str:
-    label = (
-        link.get("text")
-        or link.get("nearby_text")
-        or link.get("source_subject")
-        or "this update"
-    )
+    text = _clean_label_text(link.get("text") or "")
+    context = _clean_label_text(link.get("nearby_text") or "")
+    subject = _clean_label_text(link.get("source_subject") or "")
+    if text and not _is_generic_link_text(text):
+        label = text
+    elif context:
+        label = context
+    elif subject:
+        label = subject
+    else:
+        label = "this update"
     label = re.sub(r"\s+", " ", label).strip()
     if len(label) > 120:
         label = label[:117].rstrip() + "..."
@@ -167,11 +197,12 @@ def format_links_text(links: List[dict]) -> str:
         if not url:
             continue
         label = _link_label(link)
-        lines.append(f"- For more info about {label}, click here: {url}")
+        lines.append(f"- For more info about {label}, [click here]({url})")
     return "\n".join(lines)
 
 
 def append_links_text(text: str, links: List[dict]) -> str:
+    text = strip_links_text(remove_existing_link_sections_text(text or ""))
     block = format_links_text(links)
     if not block:
         return (text or "").strip()
@@ -179,6 +210,7 @@ def append_links_text(text: str, links: List[dict]) -> str:
 
 
 def append_links_html(raw_html: str, links: List[dict]) -> str:
+    raw_html = strip_links_html(remove_existing_link_sections_html(raw_html or ""))
     if not links:
         return (raw_html or "").strip()
     items = []
@@ -191,7 +223,7 @@ def append_links_html(raw_html: str, links: List[dict]) -> str:
         items.append(
             "<li>"
             f"For more info about {label}, click here: "
-            f'<a href="{safe_url}">{safe_url}</a>'
+            f'<a href="{safe_url}">click here</a>'
             "</li>"
         )
     if not items:
@@ -204,6 +236,72 @@ def append_links_html(raw_html: str, links: List[dict]) -> str:
         + "</ul>"
     )
     return f"{(raw_html or '').strip()}\n{section}".strip()
+
+
+def strip_links_text(text: str) -> str:
+    cleaned = html.unescape(text or "")
+
+    def markdown_link_replacement(match: re.Match) -> str:
+        label = re.sub(r"\s+", " ", match.group(1) or "").strip()
+        return "" if _is_generic_link_text(label) else label
+
+    def html_link_replacement(match: re.Match) -> str:
+        label = re.sub(r"<[^>]+>", "", match.group(1) or "")
+        label = re.sub(r"\s+", " ", html.unescape(label)).strip()
+        return "" if _is_generic_link_text(label) else label
+
+    cleaned = re.sub(r"\[([^\]]+)\]\((?:https?://|mailto:)[^)]+\)", markdown_link_replacement, cleaned)
+    cleaned = re.sub(r"<a\b[^>]*>(.*?)</a>", html_link_replacement, cleaned, flags=re.IGNORECASE | re.DOTALL)
+    cleaned = re.sub(r"https?://[^\s<>()\"']+", "", cleaned)
+    cleaned = re.sub(r"\b(?:www\.)[^\s<>()\"']+", "", cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"\s+([.,;:!?])", r"\1", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def remove_existing_link_sections_text(text: str) -> str:
+    lines = (text or "").splitlines()
+    cut_at = None
+    pattern = re.compile(r"^\s*(for more info|useful links|source links|links)\s*:?\s*$", re.IGNORECASE)
+    for idx, line in enumerate(lines):
+        if pattern.match(line):
+            cut_at = idx
+    if cut_at is None:
+        return text or ""
+    return "\n".join(lines[:cut_at]).strip()
+
+
+def strip_links_html(raw_html: str) -> str:
+    soup = BeautifulSoup(raw_html or "", "html.parser")
+    for a in list(soup.find_all("a")):
+        label = a.get_text(" ", strip=True)
+        if _is_generic_link_text(label):
+            a.decompose()
+        else:
+            a.replace_with(label)
+    for text_node in list(soup.find_all(string=True)):
+        cleaned = re.sub(r"https?://[^\s<>()\"']+", "", str(text_node))
+        cleaned = re.sub(r"\b(?:www\.)[^\s<>()\"']+", "", cleaned)
+        if cleaned != str(text_node):
+            text_node.replace_with(cleaned)
+    body = soup.body.decode_contents() if soup.body else str(soup)
+    return body.strip()
+
+
+def remove_existing_link_sections_html(raw_html: str) -> str:
+    soup = BeautifulSoup(raw_html or "", "html.parser")
+    headings = soup.find_all(["h1", "h2", "h3", "h4", "p"])
+    for heading in headings:
+        text = heading.get_text(" ", strip=True).lower()
+        if text in {"for more info", "useful links", "source links", "links"}:
+            for sibling in list(heading.find_next_siblings()):
+                if sibling.name in {"h1", "h2", "h3"}:
+                    break
+                sibling.decompose()
+            heading.decompose()
+    body = soup.body.decode_contents() if soup.body else str(soup)
+    return body.strip()
 
 
 def sanitize_newsletter_html(raw_html: str) -> str:

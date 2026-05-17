@@ -46,6 +46,7 @@ from newsletter import (
     extract_useful_links,
     sanitize_newsletter_html,
     send_html_email_smtp,
+    strip_links_text,
     useful_links_block,
 )
 
@@ -84,16 +85,16 @@ DEFAULT_DIGEST_PROMPT = (
     "dates, names of people, and links to the original story when present. Drop fluff, "
     "intros, signoffs, and self-promotion. Use short bullet points under bold theme "
     "headings. Aim for ~400-700 words depending on volume. Output plain text/markdown — "
-    "no preamble. When citing links, do not use markdown link syntax; write the raw URL after the sentence. "
-    "Do not create a final 'For more info' section; the system appends that section."
+    "no preamble. Do not include URLs, markdown links, HTML links, or a final link section in the body; "
+    "the system appends the only link section at the bottom."
 )
 DEFAULT_STORY_PROMPT = (
     "You are turning the digest below into a single flowing narrative — a 'what happened "
     "today in this world' story. Write in connected paragraphs, not bullets. Keep it "
     "factual and grounded; do not invent details. Weave related items together so the "
     "reader gets the arc of the day across topics. ~300-500 words. Output plain text "
-    "with no preamble. If you include links, write the raw URL instead of markdown links. "
-    "Do not create a final 'For more info' section; the system appends that section."
+    "with no preamble. Do not include URLs, markdown links, HTML links, or a final link section in the body; "
+    "the system appends the only link section at the bottom."
 )
 DEFAULT_LINKEDIN_PROMPT = (
     "Turn the digest below into an engaging LinkedIn post.\n\n"
@@ -113,8 +114,7 @@ DEFAULT_LINKEDIN_PROMPT = (
     "- Length: 350–600 words depending on digest size.\n"
     "- No emojis unless genuinely useful.\n"
     "- Add 3–5 relevant hashtags on the final line.\n"
-    "- If you include links, write raw URLs. Do not use markdown link syntax.\n"
-    "- Do not create a final 'For more info' section; the system appends that section.\n"
+    "- Do not include URLs, markdown links, HTML links, or a final link section in the body; the system appends the only link section at the bottom.\n"
     "- Output only the LinkedIn post. No preamble.\n\n"
     "Style:\n"
     "Conversational, sharp, professional, founder/investor/operator voice.\n"
@@ -128,8 +128,8 @@ DEFAULT_NEWSLETTER_SUBJECT_PROMPT = (
 DEFAULT_NEWSLETTER_HTML_PROMPT = (
     "Turn the digest below into a polished HTML newsletter email. Use simple email-safe HTML only: "
     "h1, h2, h3, p, ul, ol, li, strong, em, a, br, hr, div, and span. "
-    "Preserve important concrete facts and do not invent details. You may include useful source links near the relevant sections, "
-    "but do not create a final 'For more info' section because the system appends that section. "
+    "Preserve important concrete facts and do not invent details. Do not include URLs, anchor tags, or a final link section in the body; "
+    "the system appends the only link section at the bottom. "
     "Do not include scripts, forms, external stylesheets, images, or an unsubscribe footer. "
     "Output only the HTML body."
 )
@@ -241,7 +241,7 @@ class TestNewsletterReq(BaseModel):
 def _aggregate_bodies(records: List[MailRecord]) -> str:
     chunks = []
     for r in records:
-        body = r.body.strip()
+        body = strip_links_text(r.body).strip()
         if len(body) > 8000:
             body = body[:8000] + "\n\n[…truncated…]"
         chunks.append(f"=====\n{r.header_block()}\n{body}\n")
@@ -291,6 +291,18 @@ def _ensure_owner_token(settings: Optional[dict], email: str) -> str:
 def _append_links_to_input(base: str, useful_links: List[dict]) -> str:
     block = useful_links_block(useful_links)
     return base + block if block else base
+
+
+def _link_context_block(useful_links: List[dict]) -> str:
+    if not useful_links:
+        return ""
+    lines = [
+        "\n\nUseful link topics extracted from the filtered emails. Use this only to understand the source topics; do not include links in the body:"
+    ]
+    for i, link in enumerate(useful_links, 1):
+        label = link.get("text") or link.get("nearby_text") or link.get("source_subject") or "Related update"
+        lines.append(f"{i}. {strip_links_text(label)[:240]}")
+    return "\n".join(lines)
 
 
 def _clean_generated_text(text: str) -> str:
@@ -580,15 +592,13 @@ def _generate_run(
         }
 
     useful_links = extract_useful_links(kept)
-    aggregate = _append_links_to_input(_aggregate_bodies(kept), useful_links)
+    aggregate = _aggregate_bodies(kept) + _link_context_block(useful_links)
     if len(aggregate) > 80000:
         aggregate = aggregate[:80000] + "\n\n[...aggregate truncated to fit context...]"
 
-    digest = append_links_text(
-        _clean_generated_text(chat(prompts.digest, aggregate, max_tokens=8192, temperature=0.4)),
-        useful_links,
-    )
-    linked_digest = _append_links_to_input(digest, useful_links)
+    digest_body = _clean_generated_text(chat(prompts.digest, aggregate, max_tokens=8192, temperature=0.4))
+    digest = append_links_text(digest_body, useful_links)
+    optional_input = digest_body + _link_context_block(useful_links)
     story = ""
     linkedin = ""
     newsletter_subject = ""
@@ -596,12 +606,12 @@ def _generate_run(
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
         futures = {}
         if story_enabled:
-            futures["story"] = executor.submit(chat, prompts.story, linked_digest, max_tokens=8192, temperature=0.6)
+            futures["story"] = executor.submit(chat, prompts.story, optional_input, max_tokens=8192, temperature=0.6)
         if linkedin_enabled:
-            futures["linkedin"] = executor.submit(chat, prompts.linkedin, linked_digest, max_tokens=8192, temperature=0.7)
+            futures["linkedin"] = executor.submit(chat, prompts.linkedin, optional_input, max_tokens=8192, temperature=0.7)
         if newsletter_enabled:
             futures["newsletter_subject"] = executor.submit(
-                chat, prompts.newsletter_subject, linked_digest, max_tokens=256, temperature=0.5
+                chat, prompts.newsletter_subject, optional_input, max_tokens=256, temperature=0.5
             )
         for name, future in futures.items():
             if name == "story":
@@ -613,7 +623,7 @@ def _generate_run(
     if newsletter_enabled:
         newsletter_html = append_links_html(
             sanitize_newsletter_html(
-                chat(prompts.newsletter_html, linked_digest, max_tokens=8192, temperature=0.5)
+                chat(prompts.newsletter_html, optional_input, max_tokens=8192, temperature=0.5)
             ),
             useful_links,
         )
@@ -833,24 +843,22 @@ def run_stream(req: RunReq):
             # 3) Aggregate + useful links
             useful_links = extract_useful_links(kept)
             yield _sse({"type": "links_done", "count": len(useful_links), "links": useful_links})
-            aggregate = _append_links_to_input(_aggregate_bodies(kept), useful_links)
+            aggregate = _aggregate_bodies(kept) + _link_context_block(useful_links)
             if len(aggregate) > 80000:
                 aggregate = aggregate[:80000] + "\n\n[…aggregate truncated to fit context…]"
 
             # 4) Digest
             yield _sse({"type": "step", "name": "digest", "status": "start"})
             try:
-                digest = append_links_text(
-                    _clean_generated_text(chat(req.prompts.digest, aggregate, max_tokens=8192, temperature=0.4)),
-                    useful_links,
-                )
+                digest_body = _clean_generated_text(chat(req.prompts.digest, aggregate, max_tokens=8192, temperature=0.4))
+                digest = append_links_text(digest_body, useful_links)
             except LLMError as e:
                 yield _sse({"type": "error", "message": f"Digest step failed: {e}"})
                 return
             yield _sse({"type": "step", "name": "digest", "status": "done", "text": digest})
 
             # 5+) Optional outputs
-            linked_digest = _append_links_to_input(digest, useful_links)
+            optional_input = digest_body + _link_context_block(useful_links)
             story = ""
             linkedin = ""
             newsletter_subject = ""
@@ -868,15 +876,15 @@ def run_stream(req: RunReq):
                     futures: Dict[str, Any] = {}
                     if req.story_enabled:
                         futures["story"] = executor.submit(
-                            chat, req.prompts.story, linked_digest, max_tokens=8192, temperature=0.6
+                            chat, req.prompts.story, optional_input, max_tokens=8192, temperature=0.6
                         )
                     if req.linkedin_enabled:
                         futures["linkedin"] = executor.submit(
-                            chat, req.prompts.linkedin, linked_digest, max_tokens=8192, temperature=0.7
+                            chat, req.prompts.linkedin, optional_input, max_tokens=8192, temperature=0.7
                         )
                     if req.newsletter_enabled:
                         futures["newsletter_subject"] = executor.submit(
-                            chat, req.prompts.newsletter_subject, linked_digest, max_tokens=256, temperature=0.5
+                            chat, req.prompts.newsletter_subject, optional_input, max_tokens=256, temperature=0.5
                         )
 
                     for name, future in futures.items():
@@ -890,7 +898,7 @@ def run_stream(req: RunReq):
                 if req.newsletter_enabled:
                     newsletter_html = append_links_html(
                         sanitize_newsletter_html(
-                            chat(req.prompts.newsletter_html, linked_digest, max_tokens=8192, temperature=0.5)
+                            chat(req.prompts.newsletter_html, optional_input, max_tokens=8192, temperature=0.5)
                         ),
                         useful_links,
                     )
