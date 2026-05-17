@@ -576,3 +576,23 @@ def send_html_email_smtp(
         smtp.ehlo()
         smtp.login(username, password)
         smtp.send_message(msg)
+
+
+def verify_smtp_login(*, host: str, port: int, username: str, password: str) -> None:
+    try:
+        if port == 465:
+            context = ssl.create_default_context()
+            with smtplib.SMTP_SSL(host, port, context=context, timeout=SMTP_TIMEOUT_SECONDS) as smtp:
+                smtp.login(username, password)
+            return
+
+        with smtplib.SMTP(host, port, timeout=SMTP_TIMEOUT_SECONDS) as smtp:
+            smtp.ehlo()
+            smtp.starttls(context=ssl.create_default_context())
+            smtp.ehlo()
+            smtp.login(username, password)
+    except smtplib.SMTPAuthenticationError as e:
+        detail = e.smtp_error.decode("utf-8", errors="replace") if isinstance(e.smtp_error, bytes) else str(e.smtp_error)
+        raise RuntimeError(f"SMTP login rejected for {username}. Server said: {detail[:300]}") from e
+    except Exception as e:
+        raise RuntimeError(f"Could not log in to SMTP server {host}:{port} for {username}: {e}") from e

@@ -353,7 +353,7 @@ export default function Home() {
     setVerifying(true);
     try {
       await verify({ email, app_password: appPassword });
-      setVerifyMsg("✓ IMAP connection works.");
+      setVerifyMsg("✓ Mailbox read/send connection works.");
     } catch (e: any) {
       setVerifyMsg(`✗ ${e.message}`);
     } finally {

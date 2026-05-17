@@ -49,6 +49,7 @@ from newsletter import (
     send_html_email_smtp,
     strip_links_text,
     useful_links_block,
+    verify_smtp_login,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -364,6 +365,16 @@ def _send_owner_email(settings: dict, recipient: str, subject: str, html_body: s
         recipient_email=recipient,
         subject=subject,
         html_body=html_body,
+    )
+
+
+def _verify_newsletter_sender(settings: dict) -> None:
+    cfg = _smtp_config_from_settings(settings)
+    verify_smtp_login(
+        host=cfg["host"],
+        port=int(cfg["port"]),
+        username=cfg["username"],
+        password=cfg["password"],
     )
 
 
@@ -759,6 +770,11 @@ def defaults():
 def verify(req: VerifyReq):
     try:
         verify_imap(req.email, req.app_password, req.imap_server, req.imap_port)
+        _verify_newsletter_sender({
+            "email": str(req.email),
+            "app_password": req.app_password,
+            "newsletter_sending_method": "mailbox",
+        })
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -1109,6 +1125,19 @@ def save_user_settings(req: SettingsReq):
 
         # Verify password before saving
         verify_imap(req.email, req.app_password, req.imap_server, req.imap_port)
+        if req.newsletter_enabled:
+            _verify_newsletter_sender({
+                "email": str(req.email),
+                "app_password": req.app_password,
+                "newsletter_sending_method": req.newsletter_sending_method,
+                "ses_smtp_host": req.ses_smtp_host,
+                "ses_smtp_port": req.ses_smtp_port,
+                "ses_smtp_username": req.ses_smtp_username,
+                "ses_smtp_password": req.ses_smtp_password,
+                "ses_verified_sender_email": str(req.ses_verified_sender_email) if req.ses_verified_sender_email else None,
+                "ses_from_name": req.ses_from_name,
+                "ses_reply_to_email": str(req.ses_reply_to_email) if req.ses_reply_to_email else None,
+            })
 
         existing = get_settings(req.email)
         owner_token = (existing or {}).get("owner_token") or _new_owner_token()
@@ -1362,8 +1391,8 @@ def subscribe(req: SubscribeReq):
                 raise HTTPException(
                     status_code=502,
                     detail=(
-                        "Could not send the confirmation email from the newsletter owner's mail account. "
-                        "Ask the owner to check newsletter sending settings or use Amazon SES SMTP."
+                        "Could not send the confirmation email from the newsletter owner's sender. "
+                        f"{str(e)[:300]}"
                     ),
                 ) from e
         return {
