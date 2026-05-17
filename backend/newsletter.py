@@ -2,10 +2,7 @@ from __future__ import annotations
 
 import html
 import re
-import smtplib
-import ssl
 from dataclasses import asdict
-from email.message import EmailMessage
 from typing import Iterable, List, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlencode, urlparse, urlunparse
 
@@ -13,8 +10,6 @@ from bs4 import BeautifulSoup
 
 from imap_fetch import MailRecord
 
-
-SMTP_TIMEOUT_SECONDS = 20
 
 JUNK_LINK_WORDS = (
     "unsubscribe", "manage preferences", "email preferences", "privacy policy",
@@ -527,139 +522,3 @@ def sanitize_newsletter_html(raw_html: str) -> str:
 def html_to_text(raw_html: str) -> str:
     soup = BeautifulSoup(raw_html or "", "html.parser")
     return soup.get_text("\n", strip=True)
-
-
-def append_unsubscribe_footer(raw_html: str, unsubscribe_url: str) -> str:
-    footer = (
-        '<hr style="border:0;border-top:1px solid #e5e7eb;margin:24px 0;" />'
-        '<p style="font-size:12px;color:#71717a;line-height:1.5;">'
-        f'You are receiving this because you subscribed to this newsletter. '
-        f'<a href="{html.escape(unsubscribe_url)}">Unsubscribe</a>.'
-        '</p>'
-    )
-    return f"{raw_html}\n{footer}"
-
-
-def send_html_email_smtp(
-    *,
-    host: str,
-    port: int,
-    username: str,
-    password: str,
-    sender_email: str,
-    recipient_email: str,
-    subject: str,
-    html_body: str,
-    sender_name: Optional[str] = None,
-    reply_to: Optional[str] = None,
-) -> None:
-    msg = EmailMessage()
-    from_header = f"{sender_name} <{sender_email}>" if sender_name else sender_email
-    msg["From"] = from_header
-    msg["To"] = recipient_email
-    msg["Subject"] = subject
-    if reply_to:
-        msg["Reply-To"] = reply_to
-    msg.set_content(html_to_text(html_body) or subject)
-    msg.add_alternative(html_body, subtype="html")
-
-    if port == 465:
-        context = ssl.create_default_context()
-        with smtplib.SMTP_SSL(host, port, context=context, timeout=SMTP_TIMEOUT_SECONDS) as smtp:
-            smtp.login(username, password)
-            smtp.send_message(msg)
-        return
-
-    with smtplib.SMTP(host, port, timeout=SMTP_TIMEOUT_SECONDS) as smtp:
-        smtp.ehlo()
-        smtp.starttls(context=ssl.create_default_context())
-        smtp.ehlo()
-        smtp.login(username, password)
-        smtp.send_message(msg)
-
-
-def _boto3_client(service_name: str, *, region: str, access_key_id: str, secret_access_key: str):
-    try:
-        import boto3
-    except ImportError as e:
-        raise RuntimeError("Amazon SES API support is not installed on the server. Redeploy after installing boto3.") from e
-    return boto3.client(
-        service_name,
-        region_name=region,
-        aws_access_key_id=access_key_id,
-        aws_secret_access_key=secret_access_key,
-    )
-
-
-def send_html_email_ses_api(
-    *,
-    region: str,
-    access_key_id: str,
-    secret_access_key: str,
-    sender_email: str,
-    recipient_email: str,
-    subject: str,
-    html_body: str,
-    sender_name: Optional[str] = None,
-    reply_to: Optional[str] = None,
-) -> None:
-    client = _boto3_client(
-        "sesv2",
-        region=region,
-        access_key_id=access_key_id,
-        secret_access_key=secret_access_key,
-    )
-    from_address = f"{sender_name} <{sender_email}>" if sender_name else sender_email
-    try:
-        client.send_email(
-            FromEmailAddress=from_address,
-            Destination={"ToAddresses": [recipient_email]},
-            ReplyToAddresses=[reply_to] if reply_to else [],
-            Content={
-                "Simple": {
-                    "Subject": {"Data": subject, "Charset": "UTF-8"},
-                    "Body": {
-                        "Text": {"Data": html_to_text(html_body) or subject, "Charset": "UTF-8"},
-                        "Html": {"Data": html_body, "Charset": "UTF-8"},
-                    },
-                }
-            },
-        )
-    except Exception as e:
-        raise RuntimeError(f"Amazon SES API send failed in {region}: {e}") from e
-
-
-def verify_smtp_login(*, host: str, port: int, username: str, password: str) -> None:
-    try:
-        if port == 465:
-            context = ssl.create_default_context()
-            with smtplib.SMTP_SSL(host, port, context=context, timeout=SMTP_TIMEOUT_SECONDS) as smtp:
-                smtp.login(username, password)
-            return
-
-        with smtplib.SMTP(host, port, timeout=SMTP_TIMEOUT_SECONDS) as smtp:
-            smtp.ehlo()
-            smtp.starttls(context=ssl.create_default_context())
-            smtp.ehlo()
-            smtp.login(username, password)
-    except smtplib.SMTPAuthenticationError as e:
-        detail = e.smtp_error.decode("utf-8", errors="replace") if isinstance(e.smtp_error, bytes) else str(e.smtp_error)
-        raise RuntimeError(f"SMTP login rejected for {username}. Server said: {detail[:300]}") from e
-    except Exception as e:
-        raise RuntimeError(f"Could not log in to SMTP server {host}:{port} for {username}: {e}") from e
-
-
-def verify_ses_api_access(*, region: str, access_key_id: str, secret_access_key: str) -> None:
-    client = _boto3_client(
-        "sesv2",
-        region=region,
-        access_key_id=access_key_id,
-        secret_access_key=secret_access_key,
-    )
-    try:
-        client.get_account()
-    except Exception as e:
-        raise RuntimeError(
-            f"Amazon SES API check failed in {region}. Make sure the IAM key has SES access "
-            f"and the sender email/domain is verified. Server said: {e}"
-        ) from e

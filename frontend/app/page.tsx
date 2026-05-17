@@ -11,17 +11,10 @@ import {
   getSettings,
   saveSettings,
   manualPost,
-  listAllowedDomains,
-  addAllowedDomain,
-  deleteAllowedDomain,
-  listSubscribers,
-  sendNewsletter,
   type Prompts,
   type RunDetail,
   type RunListItem,
   type StreamEvent,
-  type AllowedDomain,
-  type Subscriber,
   type UsefulLink,
 } from "../lib/api";
 import { load, save } from "../lib/storage";
@@ -123,29 +116,12 @@ export default function Home() {
   const [timezone, setTimezone] = useState("UTC");
   const [lastRunAt, setLastRunAt] = useState<string | null>(null);
   const [lastAutomationError, setLastAutomationError] = useState<string | null>(null);
-  const [ownerToken, setOwnerToken] = useState("");
   const [storyEnabled, setStoryEnabled] = useState(true);
   const [linkedinEnabled, setLinkedinEnabled] = useState(true);
   const [newsletterEnabled, setNewsletterEnabled] = useState(false);
   const [linkedinAutoPostEnabled, setLinkedinAutoPostEnabled] = useState(false);
   const [linkedinPostTime, setLinkedinPostTime] = useState("07:00");
   const [linkedinTimezone, setLinkedinTimezone] = useState("UTC");
-  const [newsletterAutoSendEnabled, setNewsletterAutoSendEnabled] = useState(false);
-  const [newsletterSendTime, setNewsletterSendTime] = useState("07:00");
-  const [newsletterTimezone, setNewsletterTimezone] = useState("UTC");
-  const [newsletterSendingMethod, setNewsletterSendingMethod] = useState<"mailbox" | "ses">("mailbox");
-  const [sesSmtpHost, setSesSmtpHost] = useState("us-east-1");
-  const [sesSmtpPort, setSesSmtpPort] = useState(587);
-  const [sesSmtpUsername, setSesSmtpUsername] = useState("");
-  const [sesSmtpPassword, setSesSmtpPassword] = useState("");
-  const [sesVerifiedSenderEmail, setSesVerifiedSenderEmail] = useState("");
-  const [sesFromName, setSesFromName] = useState("");
-  const [sesReplyToEmail, setSesReplyToEmail] = useState("");
-  const [allowedDomains, setAllowedDomains] = useState<AllowedDomain[]>([]);
-  const [newDomain, setNewDomain] = useState("");
-  const [subscribers, setSubscribers] = useState<Subscriber[]>([]);
-  const [subscriberCount, setSubscriberCount] = useState(0);
-  const [publicOrigin, setPublicOrigin] = useState("");
 
   // ---- transient state ----
   const [verifying, setVerifying] = useState(false);
@@ -161,8 +137,6 @@ export default function Home() {
   const [saving, setSaving] = useState(false);
   const [posting, setPosting] = useState(false);
   const [postSuccess, setPostSuccess] = useState(false);
-  const [newsletterSending, setNewsletterSending] = useState(false);
-  const [newsletterSendMsg, setNewsletterSendMsg] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
 
   // ---- view + history ----
@@ -194,7 +168,6 @@ export default function Home() {
     if (saved) {
       setPrompts({ ...DEFAULT_PROMPTS, ...saved });
     }
-    setPublicOrigin(window.location.origin);
     setHydrated(true);
 
     // Warm up the server (e.g. Render free tier sleep)
@@ -206,7 +179,6 @@ export default function Home() {
     try {
       const s = await getSettings(email);
       if (s.found) {
-        if (s.owner_token) setOwnerToken(s.owner_token);
         if (s.app_password) setAppPassword(s.app_password);
         if (s.hours_back) setHoursBack(s.hours_back);
         setMakeWebhookUrl(s.make_webhook_url || "");
@@ -217,17 +189,6 @@ export default function Home() {
         setLinkedinAutoPostEnabled(Boolean(s.linkedin_auto_post_enabled));
         setLinkedinPostTime(s.linkedin_post_time || "07:00");
         setLinkedinTimezone(s.linkedin_timezone || "UTC");
-        setNewsletterAutoSendEnabled(Boolean(s.newsletter_auto_send_enabled));
-        setNewsletterSendTime(s.newsletter_send_time || "07:00");
-        setNewsletterTimezone(s.newsletter_timezone || "UTC");
-        setNewsletterSendingMethod(s.newsletter_sending_method || "mailbox");
-        setSesSmtpHost(s.ses_smtp_host || "us-east-1");
-        setSesSmtpPort(s.ses_smtp_port || 587);
-        setSesSmtpUsername(s.ses_smtp_username || "");
-        setSesSmtpPassword(s.ses_smtp_password || "");
-        setSesVerifiedSenderEmail(s.ses_verified_sender_email || "");
-        setSesFromName(s.ses_from_name || "");
-        setSesReplyToEmail(s.ses_reply_to_email || "");
         setTimezone(s.timezone || "UTC");
         setPostTime(s.post_time || "07:00");
         setLastRunAt(s.last_run_at || null);
@@ -268,31 +229,6 @@ export default function Home() {
     }
   }
   useEffect(() => { refreshHistory(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [email]);
-
-  async function refreshNewsletterAdmin() {
-    if (!email) {
-      setAllowedDomains([]);
-      setSubscribers([]);
-      setSubscriberCount(0);
-      return;
-    }
-    try {
-      const [domains, subs] = await Promise.all([
-        listAllowedDomains(email),
-        listSubscribers(email),
-      ]);
-      setAllowedDomains(domains);
-      setSubscribers(subs.subscribers || []);
-      setSubscriberCount(subs.count || 0);
-    } catch (e: any) {
-      console.warn("newsletter admin load failed:", e.message);
-    }
-  }
-
-  useEffect(() => {
-    if (hydrated && email) refreshNewsletterAdmin();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [email, hydrated]);
 
   // auto-scroll progress box
   useEffect(() => {
@@ -378,7 +314,7 @@ export default function Home() {
         app_password: appPassword,
         hours_back: hoursBack,
         make_webhook_url: makeWebhookUrl,
-        automation_enabled: linkedinAutoPostEnabled || newsletterAutoSendEnabled,
+        automation_enabled: linkedinAutoPostEnabled,
         timezone,
         post_time: postTime,
         prompts,
@@ -390,25 +326,12 @@ export default function Home() {
         linkedin_auto_post_enabled: linkedinAutoPostEnabled,
         linkedin_post_time: linkedinPostTime,
         linkedin_timezone: linkedinTimezone,
-        newsletter_auto_send_enabled: newsletterAutoSendEnabled,
-        newsletter_send_time: newsletterSendTime,
-        newsletter_timezone: newsletterTimezone,
-        newsletter_sending_method: newsletterSendingMethod,
-        ses_smtp_host: sesSmtpHost.trim() || undefined,
-        ses_smtp_port: sesSmtpPort,
-        ses_smtp_username: sesSmtpUsername.trim() || undefined,
-        ses_smtp_password: sesSmtpPassword.trim() || undefined,
-        ses_verified_sender_email: sesVerifiedSenderEmail.trim() || undefined,
-        ses_from_name: sesFromName.trim() || undefined,
-        ses_reply_to_email: sesReplyToEmail.trim() || undefined,
       });
-      if (saved.owner_token) setOwnerToken(saved.owner_token);
       if (saved.automation_run_reset) {
         setLastRunAt(null);
       }
       setLastAutomationError(null);
-      refreshNewsletterAdmin();
-      setVerifyMsg((linkedinAutoPostEnabled || newsletterAutoSendEnabled) ? "✓ Settings saved. Automation is ON." : "✓ Settings saved. Automation is OFF.");
+      setVerifyMsg(linkedinAutoPostEnabled ? "Settings saved. Automation is ON." : "Settings saved. Automation is OFF.");
     } catch (e: any) {
       setError(`Save failed: ${e.message}`);
     } finally {
@@ -444,63 +367,6 @@ export default function Home() {
     }
   }
 
-  async function onSendNewsletter(runId: string) {
-    if (!email || !appPassword) {
-      setError("Enter email and app password first.");
-      setShowSettings(true);
-      return;
-    }
-    if (!runId) {
-      setError("Generated newsletter run is missing. Generate the newsletter again.");
-      return;
-    }
-
-    setNewsletterSending(true);
-    setNewsletterSendMsg(null);
-    setError(null);
-    try {
-      const res = await sendNewsletter({
-        email,
-        app_password: appPassword,
-        run_id: runId,
-      });
-      if (res.skipped) {
-        setNewsletterSendMsg(`Newsletter not sent: ${res.reason || "skipped"}.`);
-      } else {
-        setNewsletterSendMsg(`Newsletter sent to ${res.sent}/${res.queued} subscribed email(s). Failed: ${res.failed}.`);
-      }
-      refreshNewsletterAdmin();
-    } catch (e: any) {
-      setError(`Newsletter send failed: ${e.message || "Unknown error"}`);
-    } finally {
-      setNewsletterSending(false);
-    }
-  }
-
-  async function onAddDomain() {
-    const domain = newDomain.trim();
-    if (!email || !appPassword || !domain) return;
-    setError(null);
-    try {
-      await addAllowedDomain({ email, app_password: appPassword, domain });
-      setNewDomain("");
-      refreshNewsletterAdmin();
-    } catch (e: any) {
-      setError(`Could not add domain: ${e.message}`);
-    }
-  }
-
-  async function onDeleteDomain(domain: string) {
-    if (!email || !appPassword) return;
-    setError(null);
-    try {
-      await deleteAllowedDomain({ email, app_password: appPassword, domain });
-      refreshNewsletterAdmin();
-    } catch (e: any) {
-      setError(`Could not remove domain: ${e.message}`);
-    }
-  }
-
   function downloadBlueprint() {
     fetch("/make_blueprint.json")
       .then(r => r.json())
@@ -517,7 +383,6 @@ export default function Home() {
   async function onRun() {
     setError(null);
     setResult(null);
-    setNewsletterSendMsg(null);
     setProgress([]);
     if (!email || !appPassword) {
       setError("Enter email and app password first.");
@@ -807,112 +672,6 @@ export default function Home() {
                     )}
                   </div>
 
-                  <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-3 space-y-3">
-                    <label className="flex items-center justify-between gap-3">
-                      <span className="text-sm font-medium text-zinc-800">Auto-send newsletter emails</span>
-                      <input type="checkbox" checked={newsletterAutoSendEnabled}
-                             onChange={e => setNewsletterAutoSendEnabled(e.target.checked)}
-                             className="h-4 w-4 accent-emerald-600" />
-                    </label>
-                    {newsletterAutoSendEnabled && (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <Field label="Newsletter send time">
-                          <input type="time" value={newsletterSendTime} onChange={e => setNewsletterSendTime(e.target.value)}
-                                 className={inputCls} />
-                        </Field>
-                        <Field label="Newsletter timezone">
-                          <TimezoneSelect value={newsletterTimezone} onChange={setNewsletterTimezone} />
-                        </Field>
-                        <Field label="Sending method">
-                          <select value={newsletterSendingMethod} onChange={e => setNewsletterSendingMethod(e.target.value as "mailbox" | "ses")} className={inputCls}>
-                            <option value="mailbox">Connected mailbox SMTP</option>
-                            <option value="ses">Amazon SES API</option>
-                          </select>
-                        </Field>
-                        {newsletterSendingMethod === "mailbox" && (
-                          <div className="sm:col-span-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
-                            Connected mailbox sending uses SMTP and can be blocked by Render. Use Amazon SES API for public subscriber emails.
-                          </div>
-                        )}
-                        {newsletterSendingMethod === "ses" && (
-                          <>
-                            <Field label="AWS SES region">
-                              <input value={sesSmtpHost} onChange={e => setSesSmtpHost(e.target.value)}
-                                     placeholder="us-east-1" className={inputCls} />
-                            </Field>
-                            <Field label="AWS access key ID">
-                              <input value={sesSmtpUsername} onChange={e => setSesSmtpUsername(e.target.value)}
-                                     className={inputCls} />
-                            </Field>
-                            <Field label="AWS secret access key">
-                              <input type="password" value={sesSmtpPassword} onChange={e => setSesSmtpPassword(e.target.value)}
-                                     className={inputCls} />
-                            </Field>
-                            <Field label="Verified sender email">
-                              <input type="email" value={sesVerifiedSenderEmail} onChange={e => setSesVerifiedSenderEmail(e.target.value)}
-                                     placeholder="founder@company.com" className={inputCls} />
-                            </Field>
-                            <Field label="From name">
-                              <input value={sesFromName} onChange={e => setSesFromName(e.target.value)}
-                                     placeholder="Company Newsletter" className={inputCls} />
-                            </Field>
-                            <Field label="Reply-to email">
-                              <input type="email" value={sesReplyToEmail} onChange={e => setSesReplyToEmail(e.target.value)}
-                                     placeholder="founder@company.com" className={inputCls} />
-                            </Field>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  {newsletterEnabled && (
-                    <div className="rounded-md border border-zinc-200 bg-white px-3 py-3 space-y-3">
-                      <div>
-                        <div className="text-sm font-medium text-zinc-800">Subscribe widget</div>
-                        <div className="text-xs text-zinc-500 mt-1">Owner token: {ownerToken || "Save settings to generate one."}</div>
-                      </div>
-                      <div>
-                        <div className="text-xs font-medium text-zinc-600 mb-1">Shareable subscribe link</div>
-                        <CodeBox value={`${publicOrigin || "https://your-site.com"}/subscribe/${ownerToken || "OWNER_PUBLIC_TOKEN"}`} />
-                      </div>
-                      <CodeBox value={`<div data-nl-owner="${ownerToken || "OWNER_PUBLIC_TOKEN"}"></div>\n<script src="${API_BASE}/embed/subscribe.js"></script>`} />
-                      <CodeBox value={`<div\n  data-nl-owner="${ownerToken || "OWNER_PUBLIC_TOKEN"}"\n  data-nl-email="{{ logged_in_user.email }}">\n</div>\n<script src="${API_BASE}/embed/subscribe.js"></script>`} />
-                      <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2">
-                        <input value={newDomain} onChange={e => setNewDomain(e.target.value)}
-                               placeholder="allowed-domain.com" className={inputCls} />
-                        <button type="button" onClick={onAddDomain}
-                                className="px-3 py-2 rounded-md border border-zinc-300 bg-white hover:bg-zinc-50 text-sm">
-                          Add domain
-                        </button>
-                      </div>
-                      <div className="space-y-1">
-                        {allowedDomains.length === 0 ? (
-                          <div className="text-xs text-zinc-500">No allowed domains yet.</div>
-                        ) : allowedDomains.map(d => (
-                          <div key={d.id || d.domain} className="flex items-center justify-between text-sm border border-zinc-100 rounded-md px-2 py-1">
-                            <span>{d.domain}</span>
-                            <button type="button" onClick={() => onDeleteDomain(d.domain)}
-                                    className="text-xs text-rose-600 hover:underline">Remove</button>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="text-xs text-zinc-600">
-                        Subscribers: {subscriberCount}
-                      </div>
-                      {subscribers.length > 0 && (
-                        <div className="max-h-40 overflow-auto border border-zinc-100 rounded-md">
-                          {subscribers.map(s => (
-                            <div key={s.id} className="flex items-center justify-between gap-3 px-2 py-1 text-xs border-b border-zinc-50 last:border-0">
-                              <span className="text-zinc-800">{s.subscriber_email}</span>
-                              <span className="text-zinc-500">{s.status}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
                   {lastAutomationError && (
                     <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
                       Last automation error: {lastAutomationError}
@@ -970,9 +729,6 @@ export default function Home() {
               onPost={(txt) => onManualPost(txt)}
               posting={posting}
               postSuccess={postSuccess}
-              onSendNewsletter={onSendNewsletter}
-              newsletterSending={newsletterSending}
-              newsletterSendMsg={newsletterSendMsg}
             />
           )}
         </>
@@ -1008,9 +764,6 @@ export default function Home() {
                 onPost={(txt) => onManualPost(txt)}
                 posting={posting}
                 postSuccess={postSuccess}
-                onSendNewsletter={onSendNewsletter}
-                newsletterSending={newsletterSending}
-                newsletterSendMsg={newsletterSendMsg}
               />
             </div>
           ) : historyDetailLoading ? (
@@ -1264,7 +1017,6 @@ function ProgressRow({ p }: { p: ProgressLine }) {
 
 function ResultTabs({
   result, active, setActive, onCopy, onPost, posting, postSuccess,
-  onSendNewsletter, newsletterSending, newsletterSendMsg,
 }: {
   result: CurrentResult;
   active: "digest" | "story" | "linkedin" | "newsletter";
@@ -1273,9 +1025,6 @@ function ResultTabs({
   onPost?: (text: string) => void;
   posting?: boolean;
   postSuccess?: boolean;
-  onSendNewsletter?: (runId: string) => void;
-  newsletterSending?: boolean;
-  newsletterSendMsg?: string | null;
 }) {
   const [copied, setCopied] = useState(false);
   const tabText =
@@ -1326,26 +1075,6 @@ function ResultTabs({
           </div>
           <div className="rounded-md border border-zinc-200 bg-white p-4"
                dangerouslySetInnerHTML={{ __html: result.newsletter_html || "" }} />
-          {onSendNewsletter && result.newsletter_html && (
-            <div className="mt-4 rounded-md border border-zinc-100 bg-zinc-50 px-3 py-3">
-              <button
-                type="button"
-                onClick={() => onSendNewsletter(result.run_id)}
-                disabled={newsletterSending}
-                className="w-full rounded-md bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
-              >
-                {newsletterSending ? "Sending newsletter..." : "Send newsletter"}
-              </button>
-              {newsletterSendMsg && (
-                <p className="mt-2 text-xs font-medium text-emerald-700">{newsletterSendMsg}</p>
-              )}
-              {!newsletterSendMsg && !newsletterSending && (
-                <p className="mt-2 text-xs text-zinc-500">
-                  Sends this generated newsletter to confirmed subscribers only.
-                </p>
-              )}
-            </div>
-          )}
         </div>
       ) : (
         <div className="p-5 text-sm leading-6 text-zinc-800 font-sans">

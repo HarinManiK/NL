@@ -69,7 +69,6 @@ export type StreamEvent =
 
 export type UserSettings = {
   email: string;
-  owner_token?: string;
   app_password?: string;
   hours_back?: number;
   make_webhook_url?: string;
@@ -78,7 +77,6 @@ export type UserSettings = {
   post_time?: string;
   last_run_at?: string | null;
   last_linkedin_run_at?: string | null;
-  last_newsletter_run_at?: string | null;
   last_automation_error?: string | null;
   prompts?: Prompts;
   imap_server?: string;
@@ -89,17 +87,6 @@ export type UserSettings = {
   linkedin_auto_post_enabled?: boolean;
   linkedin_post_time?: string;
   linkedin_timezone?: string;
-  newsletter_auto_send_enabled?: boolean;
-  newsletter_send_time?: string;
-  newsletter_timezone?: string;
-  newsletter_sending_method?: "mailbox" | "ses";
-  ses_smtp_host?: string;
-  ses_smtp_port?: number;
-  ses_smtp_username?: string;
-  ses_smtp_password?: string;
-  ses_verified_sender_email?: string;
-  ses_from_name?: string;
-  ses_reply_to_email?: string;
   found?: boolean;
 };
 
@@ -120,17 +107,6 @@ export type SaveSettingsPayload = {
   linkedin_auto_post_enabled: boolean;
   linkedin_post_time: string;
   linkedin_timezone: string;
-  newsletter_auto_send_enabled: boolean;
-  newsletter_send_time: string;
-  newsletter_timezone: string;
-  newsletter_sending_method: "mailbox" | "ses";
-  ses_smtp_host?: string;
-  ses_smtp_port?: number;
-  ses_smtp_username?: string;
-  ses_smtp_password?: string;
-  ses_verified_sender_email?: string;
-  ses_from_name?: string;
-  ses_reply_to_email?: string;
 };
 
 export type ManualPostResponse = {
@@ -141,41 +117,6 @@ export type ManualPostResponse = {
 export type SaveSettingsResponse = {
   ok: boolean;
   automation_run_reset: boolean;
-  owner_token?: string;
-};
-
-export type AllowedDomain = {
-  id: string;
-  owner_email: string;
-  domain: string;
-  created_at: string;
-};
-
-export type Subscriber = {
-  id: string;
-  subscriber_email: string;
-  status: string;
-  source?: string;
-  source_domain?: string;
-  created_at: string;
-  confirmed_at?: string | null;
-  unsubscribed_at?: string | null;
-};
-
-export type SubscribeResponse = {
-  ok: boolean;
-  status: string;
-  confirmation_required: boolean;
-  manual_email_required?: boolean;
-};
-
-export type SendNewsletterResponse = {
-  ok: boolean;
-  queued: number;
-  sent: number;
-  failed: number;
-  skipped: boolean;
-  reason?: string;
 };
 
 async function readError(res: Response): Promise<string> {
@@ -292,77 +233,6 @@ export async function manualPost(webhookUrl: string, content: string): Promise<M
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ webhook_url: webhookUrl, content }),
-  });
-  if (!r.ok) throw new Error(await readError(r));
-  return r.json();
-}
-
-export async function listAllowedDomains(email: string): Promise<AllowedDomain[]> {
-  const r = await fetch(`${API_BASE}/allowed-domains?email=${encodeURIComponent(email)}`);
-  if (!r.ok) throw new Error(await readError(r));
-  const data = await r.json();
-  return data.domains || [];
-}
-
-export async function addAllowedDomain(payload: {
-  email: string;
-  app_password: string;
-  domain: string;
-}): Promise<AllowedDomain> {
-  const r = await fetch(`${API_BASE}/allowed-domains`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!r.ok) throw new Error(await readError(r));
-  return r.json();
-}
-
-export async function deleteAllowedDomain(payload: {
-  email: string;
-  app_password: string;
-  domain: string;
-}): Promise<void> {
-  const params = new URLSearchParams({
-    email: payload.email,
-    app_password: payload.app_password,
-  });
-  const r = await fetch(`${API_BASE}/allowed-domains/${encodeURIComponent(payload.domain)}?${params.toString()}`, {
-    method: "DELETE",
-  });
-  if (!r.ok) throw new Error(await readError(r));
-}
-
-export async function listSubscribers(email: string): Promise<{ count: number; subscribers: Subscriber[] }> {
-  const r = await fetch(`${API_BASE}/subscribers?email=${encodeURIComponent(email)}`);
-  if (!r.ok) throw new Error(await readError(r));
-  return r.json();
-}
-
-export async function subscribeToNewsletter(payload: {
-  owner_token: string;
-  subscriber_email: string;
-  source_domain?: string;
-  trusted_email_provided?: boolean;
-}): Promise<SubscribeResponse> {
-  const r = await fetch(`${API_BASE}/subscribe`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!r.ok) throw new Error(await readError(r));
-  return r.json();
-}
-
-export async function sendNewsletter(payload: {
-  email: string;
-  app_password: string;
-  run_id: string;
-}): Promise<SendNewsletterResponse> {
-  const r = await fetch(`${API_BASE}/send-newsletter`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
   });
   if (!r.ok) throw new Error(await readError(r));
   return r.json();

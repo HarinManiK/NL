@@ -16,7 +16,6 @@ import json
 import logging
 import os
 import re
-import secrets
 import time
 import traceback
 import uuid
@@ -24,34 +23,26 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterator, List, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import FastAPI, Header, HTTPException, Query, Response
+from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, PlainTextResponse, StreamingResponse
-from pydantic import BaseModel, EmailStr, Field, HttpUrl, field_validator
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, EmailStr, Field, HttpUrl
 import requests
 
 from db import (
     DBError, get_run, insert_run, list_runs,
     get_settings, list_users_for_tick, update_automation_status, upsert_settings,
-    add_allowed_domain, delete_allowed_domain, enqueue_send, get_settings_by_owner_token,
-    get_subscriber_by_token, list_active_subscribers, list_allowed_domains,
-    list_subscribers, update_send_queue, update_subscriber, upsert_subscriber,
 )
 from imap_fetch import MailRecord, fetch_recent_mails, fetch_recent_mails_stream, verify_imap
 from llm import LLMError, chat, filter_newsletters
 from newsletter import (
-    append_unsubscribe_footer,
     append_links_html,
     append_links_text,
     extract_useful_links,
     filter_links_for_body,
     sanitize_newsletter_html,
-    send_html_email_smtp,
-    send_html_email_ses_api,
     strip_links_text,
     useful_links_block,
-    verify_ses_api_access,
-    verify_smtp_login,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -184,70 +175,11 @@ class SettingsReq(BaseModel):
     linkedin_auto_post_enabled: bool = False
     linkedin_post_time: str = "07:00"
     linkedin_timezone: str = "UTC"
-    newsletter_auto_send_enabled: bool = False
-    newsletter_send_time: str = "07:00"
-    newsletter_timezone: str = "UTC"
-    newsletter_sending_method: str = "mailbox"
-    ses_smtp_host: Optional[str] = None
-    ses_smtp_port: Optional[int] = None
-    ses_smtp_username: Optional[str] = None
-    ses_smtp_password: Optional[str] = None
-    ses_verified_sender_email: Optional[EmailStr] = None
-    ses_from_name: Optional[str] = None
-    ses_reply_to_email: Optional[EmailStr] = None
-
-    @field_validator(
-        "ses_smtp_host",
-        "ses_smtp_username",
-        "ses_smtp_password",
-        "ses_verified_sender_email",
-        "ses_from_name",
-        "ses_reply_to_email",
-        mode="before",
-    )
-    @classmethod
-    def blank_optional_strings_to_none(cls, value):
-        if isinstance(value, str) and not value.strip():
-            return None
-        return value
 
 
 class ManualPostReq(BaseModel):
     webhook_url: HttpUrl
     content: str = Field(min_length=1)
-
-
-class AllowedDomainReq(BaseModel):
-    email: EmailStr
-    app_password: str
-    domain: str
-    imap_server: str = "imap.gmail.com"
-    imap_port: int = 993
-
-
-class SubscribeReq(BaseModel):
-    owner_token: str
-    subscriber_email: EmailStr
-    source_domain: Optional[str] = None
-    trusted_email_provided: bool = False
-
-
-class SendNewsletterReq(BaseModel):
-    email: EmailStr
-    app_password: str
-    run_id: str
-    imap_server: str = "imap.gmail.com"
-    imap_port: int = 993
-
-
-class TestNewsletterReq(BaseModel):
-    email: EmailStr
-    app_password: str
-    recipient_email: EmailStr
-    subject: str
-    html: str
-    imap_server: str = "imap.gmail.com"
-    imap_port: int = 993
 
 
 def _aggregate_bodies(records: List[MailRecord]) -> str:
@@ -258,46 +190,6 @@ def _aggregate_bodies(records: List[MailRecord]) -> str:
             body = body[:8000] + "\n\n[…truncated…]"
         chunks.append(f"=====\n{r.header_block()}\n{body}\n")
     return "\n".join(chunks)
-
-
-def _public_app_url() -> str:
-    return os.environ.get("PUBLIC_APP_URL", "").strip().rstrip("/")
-
-
-def _new_owner_token() -> str:
-    return "nlo_" + secrets.token_urlsafe(24)
-
-
-def _new_action_token() -> str:
-    return secrets.token_urlsafe(32)
-
-
-def _normalize_domain(domain: str) -> str:
-    d = (domain or "").strip().lower()
-    d = re.sub(r"^https?://", "", d)
-    d = d.split("/")[0].split(":")[0].strip()
-    if d.startswith("www."):
-        d = d[4:]
-    if not d or not re.match(r"^[a-z0-9.-]+$", d):
-        raise HTTPException(status_code=400, detail="Enter a valid domain, like example.com.")
-    return d
-
-
-def _domains_match(source_domain: Optional[str], allowed_domain: str) -> bool:
-    if not source_domain:
-        return False
-    src = _normalize_domain(source_domain)
-    allowed = _normalize_domain(allowed_domain)
-    return src == allowed or src.endswith("." + allowed)
-
-
-def _ensure_owner_token(settings: Optional[dict], email: str) -> str:
-    token = (settings or {}).get("owner_token")
-    if token:
-        return token
-    token = _new_owner_token()
-    upsert_settings({"email": email, "owner_token": token})
-    return token
 
 
 def _append_links_to_input(base: str, useful_links: List[dict]) -> str:
@@ -323,169 +215,11 @@ def _clean_generated_text(text: str) -> str:
     return cleaned
 
 
-def _smtp_config_from_settings(settings: dict) -> dict:
-    method = (settings.get("newsletter_sending_method") or "mailbox").lower()
-    if method == "ses":
-        required = [
-            "ses_smtp_host", "ses_smtp_username",
-            "ses_smtp_password", "ses_verified_sender_email",
-        ]
-        missing = [name for name in required if not settings.get(name)]
-        if missing:
-            raise RuntimeError("Amazon SES API settings are incomplete.")
-        return {
-            "method": "ses_api",
-            "region": settings["ses_smtp_host"],
-            "access_key_id": settings["ses_smtp_username"],
-            "secret_access_key": settings["ses_smtp_password"],
-            "sender_email": settings["ses_verified_sender_email"],
-            "sender_name": settings.get("ses_from_name") or None,
-            "reply_to": settings.get("ses_reply_to_email") or settings.get("email"),
-        }
-
-    return {
-        "method": "smtp",
-        "host": "smtp.gmail.com",
-        "port": 465,
-        "username": settings["email"],
-        "password": settings["app_password"],
-        "sender_email": settings["email"],
-        "sender_name": None,
-        "reply_to": settings["email"],
-    }
-
-
-def _send_owner_email(settings: dict, recipient: str, subject: str, html_body: str) -> None:
-    cfg = _smtp_config_from_settings(settings)
-    if cfg["method"] == "ses_api":
-        send_html_email_ses_api(
-            region=cfg["region"],
-            access_key_id=cfg["access_key_id"],
-            secret_access_key=cfg["secret_access_key"],
-            sender_email=cfg["sender_email"],
-            sender_name=cfg.get("sender_name"),
-            reply_to=cfg.get("reply_to"),
-            recipient_email=recipient,
-            subject=subject,
-            html_body=html_body,
-        )
-        return
-
-    send_html_email_smtp(
-        host=cfg["host"],
-        port=int(cfg["port"]),
-        username=cfg["username"],
-        password=cfg["password"],
-        sender_email=cfg["sender_email"],
-        sender_name=cfg.get("sender_name"),
-        reply_to=cfg.get("reply_to"),
-        recipient_email=recipient,
-        subject=subject,
-        html_body=html_body,
-    )
-
-
-def _verify_newsletter_sender(settings: dict) -> None:
-    cfg = _smtp_config_from_settings(settings)
-    if cfg["method"] == "ses_api":
-        verify_ses_api_access(
-            region=cfg["region"],
-            access_key_id=cfg["access_key_id"],
-            secret_access_key=cfg["secret_access_key"],
-        )
-        return
-
-    verify_smtp_login(
-        host=cfg["host"],
-        port=int(cfg["port"]),
-        username=cfg["username"],
-        password=cfg["password"],
-    )
-
-
-def _confirmation_url(token: str) -> str:
-    base = _public_app_url()
-    path = f"/subscribe/confirm?token={token}"
-    return f"{base}{path}" if base else path
-
-
-def _unsubscribe_url(token: str) -> str:
-    base = _public_app_url()
-    path = f"/unsubscribe?token={token}"
-    return f"{base}{path}" if base else path
-
-
-def _send_confirmation_email(settings: dict, subscriber_email: str, token: str) -> None:
-    owner = settings.get("email", "this newsletter")
-    confirm_url = _confirmation_url(token)
-    subject = f"Confirm your subscription to {owner}"
-    html_body = (
-        "<div style=\"font-family:Arial,sans-serif;line-height:1.5;color:#18181b;\">"
-        f"<p>Confirm that you want to receive newsletter emails from <strong>{owner}</strong>.</p>"
-        f"<p><a href=\"{confirm_url}\">Confirm subscription</a></p>"
-        "<p>If you did not request this, you can ignore this email.</p>"
-        "</div>"
-    )
-    _send_owner_email(settings, subscriber_email, subject, html_body)
-
-
-def _subscription_allowed_without_confirmation(owner_email: str, source_domain: Optional[str]) -> bool:
-    allowed = list_allowed_domains(owner_email)
-    return any(_domains_match(source_domain, row.get("domain", "")) for row in allowed)
-
-
-def _send_newsletter_to_subscribers(settings: dict, run: dict) -> dict:
-    html_body = sanitize_newsletter_html(run.get("newsletter_html") or "")
-    subject = (run.get("newsletter_subject") or "Newsletter update").strip()
-    if not html_body:
-        return {"queued": 0, "sent": 0, "failed": 0, "skipped": True, "reason": "newsletter_html_empty"}
-
-    subscribers = list_active_subscribers(settings["email"])
-    sent = 0
-    failed = 0
-    for sub in subscribers:
-        unsubscribe_token = sub.get("unsubscribe_token") or _new_action_token()
-        if not sub.get("unsubscribe_token"):
-            update_subscriber(sub["id"], {"unsubscribe_token": unsubscribe_token})
-        queued = enqueue_send({
-            "owner_email": settings["email"],
-            "run_id": run.get("run_id") or run.get("id"),
-            "subscriber_email": sub["subscriber_email"],
-            "status": "pending",
-            "scheduled_at": datetime.now(timezone.utc).isoformat(),
-        })
-        send_id = queued.get("id")
-        try:
-            html_with_footer = append_unsubscribe_footer(html_body, _unsubscribe_url(unsubscribe_token))
-            if send_id:
-                update_send_queue(send_id, {"status": "sending", "attempts": 1})
-            _send_owner_email(settings, sub["subscriber_email"], subject, html_with_footer)
-            sent += 1
-            if send_id:
-                update_send_queue(send_id, {
-                    "status": "sent",
-                    "sent_at": datetime.now(timezone.utc).isoformat(),
-                })
-        except Exception as e:
-            failed += 1
-            if send_id:
-                update_send_queue(send_id, {
-                    "status": "failed",
-                    "attempts": 1,
-                    "last_error": str(e)[:1000],
-                })
-    return {"queued": len(subscribers), "sent": sent, "failed": failed, "skipped": False}
-
-
 def _schedule_due_status(settings: dict, now_utc: datetime, prefix: str) -> dict:
     if prefix == "linkedin":
         time_key = "linkedin_post_time"
         timezone_key = "linkedin_timezone"
         last_key = "last_linkedin_run_at"
-    elif prefix == "newsletter":
-        time_key = "newsletter_send_time"
-        timezone_key = "newsletter_timezone"
-        last_key = "last_newsletter_run_at"
     else:
         time_key = f"{prefix}_time"
         timezone_key = f"{prefix}_timezone"
@@ -795,11 +529,6 @@ def defaults():
 def verify(req: VerifyReq):
     try:
         verify_imap(req.email, req.app_password, req.imap_server, req.imap_port)
-        _verify_newsletter_sender({
-            "email": str(req.email),
-            "app_password": req.app_password,
-            "newsletter_sending_method": "mailbox",
-        })
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -1078,11 +807,9 @@ def get_user_settings(email: EmailStr = Query(...)):
         s = get_settings(email)
         if not s:
             return {"email": email, "found": False}
-        owner_token = _ensure_owner_token(s, email)
         return {
             "email": s.get("email", email),
             "app_password": s.get("app_password", ""),
-            "owner_token": owner_token,
             "make_webhook_url": s.get("make_webhook_url") or "",
             "hours_back": s.get("hours_back") or 24,
             "automation_enabled": bool(s.get("automation_enabled")),
@@ -1094,19 +821,7 @@ def get_user_settings(email: EmailStr = Query(...)):
             "linkedin_auto_post_enabled": bool(s.get("linkedin_auto_post_enabled", s.get("automation_enabled", False))),
             "linkedin_post_time": s.get("linkedin_post_time") or s.get("post_time") or "07:00",
             "linkedin_timezone": s.get("linkedin_timezone") or s.get("timezone") or "UTC",
-            "newsletter_auto_send_enabled": bool(s.get("newsletter_auto_send_enabled", False)),
-            "newsletter_send_time": s.get("newsletter_send_time") or "07:00",
-            "newsletter_timezone": s.get("newsletter_timezone") or s.get("timezone") or "UTC",
-            "newsletter_sending_method": s.get("newsletter_sending_method") or "mailbox",
-            "ses_smtp_host": s.get("ses_smtp_host") or "",
-            "ses_smtp_port": s.get("ses_smtp_port") or 587,
-            "ses_smtp_username": s.get("ses_smtp_username") or "",
-            "ses_smtp_password": s.get("ses_smtp_password") or "",
-            "ses_verified_sender_email": s.get("ses_verified_sender_email") or "",
-            "ses_from_name": s.get("ses_from_name") or "",
-            "ses_reply_to_email": s.get("ses_reply_to_email") or "",
             "last_linkedin_run_at": s.get("last_linkedin_run_at"),
-            "last_newsletter_run_at": s.get("last_newsletter_run_at"),
             "last_run_at": s.get("last_run_at"),
             "last_automation_error": s.get("last_automation_error"),
             "prompts": {
@@ -1138,38 +853,19 @@ def save_user_settings(req: SettingsReq):
         except ZoneInfoNotFoundError as e:
             raise HTTPException(status_code=400, detail=f"Unknown timezone: {req.timezone}") from e
         _validate_post_time(req.post_time)
-        for tz_name in (req.linkedin_timezone, req.newsletter_timezone):
-            try:
-                ZoneInfo(tz_name)
-            except ZoneInfoNotFoundError as e:
-                raise HTTPException(status_code=400, detail=f"Unknown timezone: {tz_name}") from e
+        try:
+            ZoneInfo(req.linkedin_timezone)
+        except ZoneInfoNotFoundError as e:
+            raise HTTPException(status_code=400, detail=f"Unknown timezone: {req.linkedin_timezone}") from e
         _validate_post_time(req.linkedin_post_time)
-        _validate_post_time(req.newsletter_send_time)
-        if req.newsletter_sending_method not in {"mailbox", "ses"}:
-            raise HTTPException(status_code=400, detail="Newsletter sending method must be mailbox or ses.")
 
         # Verify password before saving
         verify_imap(req.email, req.app_password, req.imap_server, req.imap_port)
-        if req.newsletter_enabled:
-            _verify_newsletter_sender({
-                "email": str(req.email),
-                "app_password": req.app_password,
-                "newsletter_sending_method": req.newsletter_sending_method,
-                "ses_smtp_host": req.ses_smtp_host,
-                "ses_smtp_port": req.ses_smtp_port,
-                "ses_smtp_username": req.ses_smtp_username,
-                "ses_smtp_password": req.ses_smtp_password,
-                "ses_verified_sender_email": str(req.ses_verified_sender_email) if req.ses_verified_sender_email else None,
-                "ses_from_name": req.ses_from_name,
-                "ses_reply_to_email": str(req.ses_reply_to_email) if req.ses_reply_to_email else None,
-            })
 
         existing = get_settings(req.email)
-        owner_token = (existing or {}).get("owner_token") or _new_owner_token()
         automation_enabled = bool(
             req.automation_enabled
             or req.linkedin_auto_post_enabled
-            or req.newsletter_auto_send_enabled
         )
         reset_last_run = (
             not existing
@@ -1193,7 +889,6 @@ def save_user_settings(req: SettingsReq):
         row = {
             "email": req.email,
             "app_password": req.app_password,
-            "owner_token": owner_token,
             "hours_back": req.hours_back,
             "make_webhook_url": req.make_webhook_url,
             "automation_enabled": automation_enabled,
@@ -1205,17 +900,6 @@ def save_user_settings(req: SettingsReq):
             "linkedin_auto_post_enabled": req.linkedin_auto_post_enabled,
             "linkedin_post_time": req.linkedin_post_time,
             "linkedin_timezone": req.linkedin_timezone,
-            "newsletter_auto_send_enabled": req.newsletter_auto_send_enabled,
-            "newsletter_send_time": req.newsletter_send_time,
-            "newsletter_timezone": req.newsletter_timezone,
-            "newsletter_sending_method": req.newsletter_sending_method,
-            "ses_smtp_host": req.ses_smtp_host,
-            "ses_smtp_port": req.ses_smtp_port,
-            "ses_smtp_username": req.ses_smtp_username,
-            "ses_smtp_password": req.ses_smtp_password,
-            "ses_verified_sender_email": str(req.ses_verified_sender_email) if req.ses_verified_sender_email else None,
-            "ses_from_name": req.ses_from_name,
-            "ses_reply_to_email": str(req.ses_reply_to_email) if req.ses_reply_to_email else None,
             "filter_prompt": req.prompts.filter,
             "digest_prompt": req.prompts.digest,
             "story_prompt": req.prompts.story,
@@ -1228,304 +912,12 @@ def save_user_settings(req: SettingsReq):
         if reset_last_run:
             row["last_run_at"] = None
             row["last_linkedin_run_at"] = None
-            row["last_newsletter_run_at"] = None
             row["last_automation_error"] = None
 
         upsert_settings(row)
-        return {"ok": True, "automation_run_reset": reset_last_run, "owner_token": owner_token}
+        return {"ok": True, "automation_run_reset": reset_last_run}
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=f"IMAP Verification failed: {e}")
-    except DBError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/allowed-domains")
-def get_allowed_domains(email: EmailStr = Query(...)):
-    try:
-        return {"domains": list_allowed_domains(email)}
-    except DBError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/allowed-domains")
-def create_allowed_domain(req: AllowedDomainReq):
-    try:
-        verify_imap(req.email, req.app_password, req.imap_server, req.imap_port)
-        domain = _normalize_domain(req.domain)
-        return add_allowed_domain(req.email, domain)
-    except RuntimeError as e:
-        raise HTTPException(status_code=400, detail=f"IMAP Verification failed: {e}")
-    except DBError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.delete("/allowed-domains/{domain}")
-def remove_allowed_domain(
-    domain: str,
-    email: EmailStr = Query(...),
-    app_password: str = Query(...),
-    imap_server: str = Query(default="imap.gmail.com"),
-    imap_port: int = Query(default=993),
-):
-    try:
-        verify_imap(email, app_password, imap_server, imap_port)
-        delete_allowed_domain(email, _normalize_domain(domain))
-        return {"ok": True}
-    except RuntimeError as e:
-        raise HTTPException(status_code=400, detail=f"IMAP Verification failed: {e}")
-    except DBError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/subscribers")
-def get_subscribers(email: EmailStr = Query(...)):
-    try:
-        rows = list_subscribers(email)
-        return {"count": len(rows), "subscribers": rows}
-    except DBError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/embed/subscribe.js")
-def subscribe_widget_js():
-    js = r"""
-(function () {
-  function render(el) {
-    if (el.__nlRendered) return;
-    el.__nlRendered = true;
-    var owner = el.getAttribute("data-nl-owner") || "";
-    var providedEmail = el.getAttribute("data-nl-email") || "";
-    var script = document.currentScript || document.querySelector('script[src*="/embed/subscribe.js"]');
-    var api = script ? new URL(script.src).origin : "";
-    var box = document.createElement("div");
-    box.style.cssText = "font-family:system-ui,-apple-system,Segoe UI,sans-serif;display:flex;gap:8px;align-items:center;flex-wrap:wrap";
-    var input = document.createElement("input");
-    input.type = "email";
-    input.placeholder = "email@example.com";
-    input.value = providedEmail;
-    input.style.cssText = "min-width:220px;border:1px solid #d4d4d8;border-radius:6px;padding:8px 10px;font:inherit";
-    if (providedEmail) input.readOnly = true;
-    var button = document.createElement("button");
-    button.type = "button";
-    button.textContent = providedEmail ? "Subscribe as " + providedEmail : "Subscribe";
-    button.style.cssText = "border:0;border-radius:6px;background:#18181b;color:white;padding:9px 12px;font:inherit;cursor:pointer";
-    var msg = document.createElement("div");
-    msg.style.cssText = "width:100%;font-size:12px;color:#52525b;margin-top:4px";
-    box.appendChild(input);
-    box.appendChild(button);
-    box.appendChild(msg);
-    el.appendChild(box);
-    function switchToManualEmail() {
-      providedEmail = "";
-      input.value = "";
-      input.readOnly = false;
-      button.textContent = "Subscribe";
-      msg.textContent = "Enter your email address to receive a confirmation email.";
-    }
-    if (providedEmail && owner) {
-      fetch(api + "/subscribe/embed-policy?owner_token=" + encodeURIComponent(owner) + "&source_domain=" + encodeURIComponent(window.location.hostname))
-        .then(function (r) { return r.ok ? r.json() : {trusted_email_allowed: false}; })
-        .then(function (data) {
-          if (!data.trusted_email_allowed) switchToManualEmail();
-        })
-        .catch(function () { switchToManualEmail(); });
-    }
-    button.addEventListener("click", function () {
-      var email = (input.value || "").trim();
-      if (!owner || !email) {
-        msg.textContent = "Enter a valid email.";
-        return;
-      }
-      button.disabled = true;
-      msg.textContent = "Subscribing...";
-      fetch(api + "/subscribe", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({
-          owner_token: owner,
-          subscriber_email: email,
-          source_domain: window.location.hostname,
-          trusted_email_provided: Boolean(providedEmail)
-        })
-      }).then(function (r) {
-        return r.json().then(function (data) {
-          if (!r.ok) throw new Error(data.detail || "Subscribe failed");
-          return data;
-        });
-      }).then(function (data) {
-        if (data.manual_email_required) {
-          switchToManualEmail();
-          button.disabled = false;
-          return;
-        }
-        msg.textContent = data.confirmation_required
-          ? "Check your email to confirm the subscription."
-          : "Subscribed.";
-      }).catch(function (err) {
-        msg.textContent = err.message || "Subscribe failed.";
-        button.disabled = false;
-      });
-    });
-  }
-  document.querySelectorAll("[data-nl-owner]").forEach(render);
-})();
-"""
-    return Response(content=js, media_type="application/javascript")
-
-
-@app.post("/subscribe")
-def subscribe(req: SubscribeReq):
-    try:
-        settings = get_settings_by_owner_token(req.owner_token)
-        if not settings:
-            raise HTTPException(status_code=404, detail="Newsletter owner not found.")
-        owner_email = settings["email"]
-        source_domain = _normalize_domain(req.source_domain) if req.source_domain else None
-        direct = (
-            req.trusted_email_provided
-            and source_domain
-            and _subscription_allowed_without_confirmation(owner_email, source_domain)
-        )
-        if req.trusted_email_provided and not direct:
-            return {
-                "ok": True,
-                "status": "manual_email_required",
-                "confirmation_required": True,
-                "manual_email_required": True,
-            }
-        confirmation_token = _new_action_token()
-        unsubscribe_token = _new_action_token()
-        status = "subscribed" if direct else "pending"
-        row = upsert_subscriber({
-            "owner_email": owner_email,
-            "owner_token": req.owner_token,
-            "subscriber_email": str(req.subscriber_email).lower(),
-            "status": status,
-            "source": "trusted_embed" if direct else "confirmed_email",
-            "source_domain": source_domain,
-            "confirmation_token": confirmation_token,
-            "unsubscribe_token": unsubscribe_token,
-            "confirmed_at": datetime.now(timezone.utc).isoformat() if direct else None,
-            "unsubscribed_at": None,
-        })
-        if not direct:
-            try:
-                _send_confirmation_email(settings, str(req.subscriber_email), confirmation_token)
-            except Exception as e:
-                log.exception("subscription confirmation send failed owner=%s subscriber=%s", owner_email, req.subscriber_email)
-                raise HTTPException(
-                    status_code=502,
-                    detail=(
-                        "Could not send the confirmation email from the newsletter owner's sender. "
-                        f"{str(e)[:300]}"
-                    ),
-                ) from e
-        return {
-            "ok": True,
-            "status": row.get("status", status),
-            "confirmation_required": not direct,
-            "manual_email_required": False,
-        }
-    except HTTPException:
-        raise
-    except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    except DBError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/subscribe/embed-policy")
-def subscribe_embed_policy(owner_token: str = Query(...), source_domain: Optional[str] = Query(default=None)):
-    try:
-        settings = get_settings_by_owner_token(owner_token)
-        if not settings:
-            raise HTTPException(status_code=404, detail="Newsletter owner not found.")
-        owner_email = settings["email"]
-        normalized_source = _normalize_domain(source_domain) if source_domain else None
-        return {
-            "ok": True,
-            "trusted_email_allowed": bool(
-                normalized_source and _subscription_allowed_without_confirmation(owner_email, normalized_source)
-            ),
-        }
-    except HTTPException:
-        raise
-    except DBError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/subscribe/confirm")
-def confirm_subscription(token: str = Query(...)):
-    try:
-        sub = get_subscriber_by_token("confirmation_token", token)
-        if not sub:
-            return HTMLResponse("<h1>Subscription link not found.</h1>", status_code=404)
-        update_subscriber(sub["id"], {
-            "status": "subscribed",
-            "confirmed_at": datetime.now(timezone.utc).isoformat(),
-            "unsubscribed_at": None,
-        })
-        return HTMLResponse("<h1>Subscription confirmed.</h1><p>You can close this page.</p>")
-    except DBError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/unsubscribe")
-def unsubscribe(token: str = Query(...)):
-    try:
-        sub = get_subscriber_by_token("unsubscribe_token", token)
-        if not sub:
-            return HTMLResponse("<h1>Unsubscribe link not found.</h1>", status_code=404)
-        update_subscriber(sub["id"], {
-            "status": "unsubscribed",
-            "unsubscribed_at": datetime.now(timezone.utc).isoformat(),
-        })
-        return HTMLResponse("<h1>You are unsubscribed.</h1><p>You will not receive future emails from this newsletter.</p>")
-    except DBError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/send-test-newsletter")
-def send_test_newsletter(req: TestNewsletterReq):
-    try:
-        verify_imap(req.email, req.app_password, req.imap_server, req.imap_port)
-        settings = get_settings(req.email) or {
-            "email": str(req.email),
-            "app_password": req.app_password,
-            "newsletter_sending_method": "mailbox",
-        }
-        settings["app_password"] = req.app_password
-        _send_owner_email(settings, str(req.recipient_email), req.subject, sanitize_newsletter_html(req.html))
-        return {"ok": True}
-    except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    except DBError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/send-newsletter")
-def send_newsletter(req: SendNewsletterReq):
-    try:
-        verify_imap(req.email, req.app_password, req.imap_server, req.imap_port)
-        settings = get_settings(str(req.email))
-        if not settings:
-            raise HTTPException(status_code=404, detail="Owner settings not found. Save settings first.")
-        run = get_run(req.run_id, str(req.email))
-        if not run:
-            raise HTTPException(status_code=404, detail="Generated newsletter run not found.")
-        if not (run.get("newsletter_html") or "").strip():
-            raise HTTPException(status_code=400, detail="This run does not have a generated newsletter email.")
-        settings["app_password"] = req.app_password
-        result = _send_newsletter_to_subscribers(settings, {
-            "id": run.get("id"),
-            "newsletter_subject": run.get("newsletter_subject") or "Newsletter update",
-            "newsletter_html": run.get("newsletter_html") or "",
-        })
-        return {"ok": True, **result}
-    except HTTPException:
-        raise
-    except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e))
     except DBError as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1542,7 +934,6 @@ def automation_status(email: EmailStr = Query(...)):
 
     now = datetime.now(timezone.utc)
     linkedin_status = _schedule_due_status(s, now, "linkedin")
-    newsletter_status = _schedule_due_status(s, now, "newsletter")
     return {
         "found": True,
         "email": email,
@@ -1553,12 +944,9 @@ def automation_status(email: EmailStr = Query(...)):
         "has_webhook": bool((s.get("make_webhook_url") or "").strip()),
         "last_run_at": s.get("last_run_at"),
         "last_linkedin_run_at": s.get("last_linkedin_run_at"),
-        "last_newsletter_run_at": s.get("last_newsletter_run_at"),
         "last_automation_error": s.get("last_automation_error"),
         "linkedin_due_now": bool(linkedin_status["due"]) if bool(s.get("linkedin_auto_post_enabled")) else False,
         "linkedin_due_reason": linkedin_status["reason"] if bool(s.get("linkedin_auto_post_enabled")) else "linkedin_disabled",
-        "newsletter_due_now": bool(newsletter_status["due"]) if bool(s.get("newsletter_auto_send_enabled")) else False,
-        "newsletter_due_reason": newsletter_status["reason"] if bool(s.get("newsletter_auto_send_enabled")) else "newsletter_disabled",
         "server_time_utc": now.isoformat(),
     }
 
@@ -1566,7 +954,7 @@ def automation_status(email: EmailStr = Query(...)):
 def _run_automation_for_user(settings: dict, mode: str, claimed_at: Optional[datetime] = None) -> dict:
     email = settings["email"]
     claim_time = claimed_at or datetime.now(timezone.utc)
-    last_key = "last_linkedin_run_at" if mode == "linkedin" else "last_newsletter_run_at"
+    last_key = "last_linkedin_run_at"
     try:
         # Claim before slow work so repeated cron ticks cannot start duplicates.
         update_automation_status(email, {
@@ -1582,19 +970,16 @@ def _run_automation_for_user(settings: dict, mode: str, claimed_at: Optional[dat
             prompts=_prompts_from_settings(settings),
             story_enabled=bool(settings.get("story_enabled", True)),
             linkedin_enabled=mode == "linkedin" and bool(settings.get("linkedin_enabled", True)),
-            newsletter_enabled=mode == "newsletter" and bool(settings.get("newsletter_enabled", True)),
+            newsletter_enabled=False,
             imap_server=settings.get("imap_server") or "imap.gmail.com",
             imap_port=settings.get("imap_port") or 993,
         )
 
         posted = False
-        newsletter_send = None
         webhook_url = (settings.get("make_webhook_url") or "").strip()
         if mode == "linkedin" and webhook_url and not result.get("skipped") and result.get("linkedin"):
             _post_to_make(webhook_url, result["linkedin"])
             posted = True
-        if mode == "newsletter" and not result.get("skipped") and result.get("newsletter_html"):
-            newsletter_send = _send_newsletter_to_subscribers(settings, result)
 
         try:
             update_automation_status(email, {
@@ -1615,7 +1000,6 @@ def _run_automation_for_user(settings: dict, mode: str, claimed_at: Optional[dat
             "num_kept": result.get("num_kept"),
             "mode": mode,
             "posted": posted,
-            "newsletter_send": newsletter_send,
             "claimed_at": claim_time.isoformat(),
         }
     except Exception as e:
@@ -1657,29 +1041,17 @@ def automation_tick(
             and bool(user.get("linkedin_enabled", True))
             and bool((user.get("make_webhook_url") or "").strip())
         )
-        newsletter_due = (
-            bool(user.get("newsletter_auto_send_enabled"))
-            and bool(user.get("newsletter_enabled", True))
-        )
         linkedin_status = _schedule_due_status(user, now, "linkedin") if linkedin_due else {
             "due": False, "reason": "linkedin_disabled"
-        }
-        newsletter_status = _schedule_due_status(user, now, "newsletter") if newsletter_due else {
-            "due": False, "reason": "newsletter_disabled"
         }
         checked.append({
             "email": user.get("email"),
             "linkedin_due": bool(linkedin_status["due"]),
             "linkedin_reason": linkedin_status["reason"],
-            "newsletter_due": bool(newsletter_status["due"]),
-            "newsletter_reason": newsletter_status["reason"],
             "last_linkedin_run_at": user.get("last_linkedin_run_at"),
-            "last_newsletter_run_at": user.get("last_newsletter_run_at"),
         })
         if linkedin_status["due"]:
             results.append(_run_automation_for_user(user, "linkedin", now))
-        if newsletter_status["due"]:
-            results.append(_run_automation_for_user(user, "newsletter", now))
 
     log.info("automation tick users_checked=%s triggered=%s", len(users), len(results))
     return {
