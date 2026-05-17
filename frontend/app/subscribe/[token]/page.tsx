@@ -32,7 +32,12 @@ export default function SubscribePage() {
       setMessage("Check your email to confirm your subscription.");
       setEmail("");
     } catch (err: any) {
-      setError(err.message || "Subscribe failed.");
+      const message = err.message || "Subscribe failed.";
+      setError(
+        /failed to fetch/i.test(message)
+          ? "Could not reach the newsletter API. Try again in a minute; if it repeats, the owner's confirmation email sender is failing."
+          : message,
+      );
     } finally {
       setLoading(false);
     }

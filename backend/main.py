@@ -342,7 +342,7 @@ def _smtp_config_from_settings(settings: dict) -> dict:
 
     return {
         "host": "smtp.gmail.com",
-        "port": 587,
+        "port": 465,
         "username": settings["email"],
         "password": settings["app_password"],
         "sender_email": settings["email"],
@@ -1355,7 +1355,17 @@ def subscribe(req: SubscribeReq):
             "unsubscribed_at": None,
         })
         if not direct:
-            _send_confirmation_email(settings, str(req.subscriber_email), confirmation_token)
+            try:
+                _send_confirmation_email(settings, str(req.subscriber_email), confirmation_token)
+            except Exception as e:
+                log.exception("subscription confirmation send failed owner=%s subscriber=%s", owner_email, req.subscriber_email)
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        "Could not send the confirmation email from the newsletter owner's mail account. "
+                        "Ask the owner to check newsletter sending settings or use Amazon SES SMTP."
+                    ),
+                ) from e
         return {
             "ok": True,
             "status": row.get("status", status),

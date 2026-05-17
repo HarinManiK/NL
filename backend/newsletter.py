@@ -14,6 +14,8 @@ from bs4 import BeautifulSoup
 from imap_fetch import MailRecord
 
 
+SMTP_TIMEOUT_SECONDS = 20
+
 JUNK_LINK_WORDS = (
     "unsubscribe", "manage preferences", "email preferences", "privacy policy",
     "terms of use", "terms and conditions", "view in browser", "view online",
@@ -563,12 +565,12 @@ def send_html_email_smtp(
 
     if port == 465:
         context = ssl.create_default_context()
-        with smtplib.SMTP_SSL(host, port, context=context, timeout=60) as smtp:
+        with smtplib.SMTP_SSL(host, port, context=context, timeout=SMTP_TIMEOUT_SECONDS) as smtp:
             smtp.login(username, password)
             smtp.send_message(msg)
         return
 
-    with smtplib.SMTP(host, port, timeout=60) as smtp:
+    with smtplib.SMTP(host, port, timeout=SMTP_TIMEOUT_SECONDS) as smtp:
         smtp.ehlo()
         smtp.starttls(context=ssl.create_default_context())
         smtp.ehlo()
