@@ -403,6 +403,16 @@ def _generate_run(
     digest_links = filter_links_for_body(useful_links, digest_body)
     digest = append_links_text(digest_body, digest_links)
     optional_input = digest_body + _link_context_block(digest_links)
+    
+    unique_sources = []
+    for m in kept:
+        s = (m.sender_name or m.sender_email or "").strip()
+        if s and s not in unique_sources:
+            unique_sources.append(s)
+    sources_text = ""
+    if unique_sources:
+        sources_text = "\n\nSources used to create this digest:\n" + "\n".join(f"- {s}" for s in unique_sources)
+
     story = ""
     linkedin = ""
     newsletter_subject = ""
@@ -431,7 +441,7 @@ def _generate_run(
                 newsletter_subject = future.result().strip().strip('"')
             elif name == "article":
                 article_body = _clean_generated_text(future.result())
-                article = append_links_text(article_body, filter_links_for_body(digest_links, article_body))
+                article = article_body + sources_text
     if newsletter_enabled:
         newsletter_body = sanitize_newsletter_html(
             chat(prompts.newsletter_html, optional_input, max_tokens=8192, temperature=0.5)
@@ -690,6 +700,15 @@ def run_stream(req: RunReq):
                 yield _sse({"type": "step", "name": "article", "status": "start"})
 
             try:
+                unique_sources = []
+                for m in kept:
+                    s = (m.sender_name or m.sender_email or "").strip()
+                    if s and s not in unique_sources:
+                        unique_sources.append(s)
+                sources_text = ""
+                if unique_sources:
+                    sources_text = "\n\nSources used to create this digest:\n" + "\n".join(f"- {s}" for s in unique_sources)
+
                 with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
                     futures: Dict[str, Any] = {}
                     if req.story_enabled:
@@ -720,7 +739,7 @@ def run_stream(req: RunReq):
                             newsletter_subject = future.result().strip().strip('"')
                         elif name == "article":
                             article_body = _clean_generated_text(future.result())
-                            article = append_links_text(article_body, filter_links_for_body(digest_links, article_body))
+                            article = article_body + sources_text
 
                 if req.newsletter_enabled:
                     newsletter_body = sanitize_newsletter_html(
