@@ -19,6 +19,8 @@ create table if not exists public.user_settings (
   linkedin_prompt     text,
   newsletter_subject_prompt text,
   newsletter_html_prompt text,
+  article_enabled     boolean not null default true,
+  article_prompt      text,
   imap_server         text not null default 'imap.gmail.com',
   imap_port           int not null default 993,
   last_run_at         timestamptz,
@@ -40,6 +42,8 @@ alter table public.user_settings
   add column if not exists linkedin_timezone text not null default 'UTC',
   add column if not exists newsletter_subject_prompt text,
   add column if not exists newsletter_html_prompt text,
+  add column if not exists article_enabled boolean not null default true,
+  add column if not exists article_prompt text,
   add column if not exists last_run_at timestamptz,
   add column if not exists last_linkedin_run_at timestamptz,
   add column if not exists last_automation_error text;

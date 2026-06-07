@@ -20,6 +20,7 @@ export type Prompts = {
   linkedin: string;
   newsletter_subject: string;
   newsletter_html: string;
+  article: string;
 };
 
 export type RunListItem = {
@@ -39,6 +40,7 @@ export type RunDetail = {
   digest: string;
   story: string;
   linkedin: string;
+  article?: string;
   newsletter_subject?: string;
   newsletter_html?: string;
   useful_links?: UsefulLink[];
@@ -62,9 +64,9 @@ export type StreamEvent =
   | { type: "decision"; subject: string; sender: string; kept: boolean }
   | { type: "links_done"; count: number; links: UsefulLink[] }
   | { type: "filter_done"; kept: number; total: number; run_id: string }
-  | { type: "step"; name: "digest" | "story" | "linkedin" | "newsletter"; status: "start" | "done"; text?: string }
+  | { type: "step"; name: "digest" | "story" | "linkedin" | "newsletter" | "article"; status: "start" | "done"; text?: string }
   | { type: "newsletter_done"; subject: string; html: string }
-  | { type: "complete"; run_id: string; num_total: number; num_kept: number; digest: string; story: string; linkedin: string; newsletter_subject?: string; newsletter_html?: string; useful_links?: UsefulLink[]; elapsed_seconds: number }
+  | { type: "complete"; run_id: string; num_total: number; num_kept: number; digest: string; story: string; linkedin: string; article: string; newsletter_subject?: string; newsletter_html?: string; useful_links?: UsefulLink[]; elapsed_seconds: number }
   | { type: "error"; message: string };
 
 export type UserSettings = {
@@ -84,6 +86,7 @@ export type UserSettings = {
   story_enabled?: boolean;
   linkedin_enabled?: boolean;
   newsletter_enabled?: boolean;
+  article_enabled?: boolean;
   linkedin_auto_post_enabled?: boolean;
   linkedin_post_time?: string;
   linkedin_timezone?: string;
@@ -104,6 +107,7 @@ export type SaveSettingsPayload = {
   story_enabled: boolean;
   linkedin_enabled: boolean;
   newsletter_enabled: boolean;
+  article_enabled: boolean;
   linkedin_auto_post_enabled: boolean;
   linkedin_post_time: string;
   linkedin_timezone: string;
@@ -156,6 +160,7 @@ export async function streamRun(
     story_enabled: boolean;
     linkedin_enabled: boolean;
     newsletter_enabled: boolean;
+    article_enabled: boolean;
   },
   onEvent: (evt: StreamEvent) => void,
   signal?: AbortSignal,

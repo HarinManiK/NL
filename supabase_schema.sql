@@ -23,6 +23,9 @@ create table if not exists public.runs (
   linkedin_prompt text,
   newsletter_subject_prompt text,
   newsletter_html_prompt text,
+  article         text,
+  article_enabled boolean not null default true,
+  article_prompt  text,
   elapsed_seconds numeric
 );
 
@@ -34,7 +37,10 @@ alter table public.runs
   add column if not exists newsletter_html text,
   add column if not exists useful_links jsonb not null default '[]'::jsonb,
   add column if not exists newsletter_subject_prompt text,
-  add column if not exists newsletter_html_prompt text;
+  add column if not exists newsletter_html_prompt text,
+  add column if not exists article text,
+  add column if not exists article_enabled boolean not null default true,
+  add column if not exists article_prompt text;
 
 create index if not exists runs_email_created_idx
   on public.runs (email, created_at desc);

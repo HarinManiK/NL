@@ -80,6 +80,18 @@ const DEFAULT_PROMPTS: Prompts = {
     "Preserve important concrete facts and do not invent details. Do not include URLs, anchor tags, or a final link section in the body; " +
     "the system appends the only link section at the bottom. " +
     "Do not include scripts, forms, external stylesheets, images, or an unsubscribe footer. Output only the HTML body.",
+  article:
+    "You are turning the digest below into a polished, professional newsletter article.\n\n" +
+    "Goal:\n" +
+    "Create a cohesive article that starts with a strong executive summary and then presents the detailed news.\n\n" +
+    "Hard rules:\n" +
+    "- Start with an introductory greeting (e.g., 'Welcome to your briefing' or 'Here is an overview of our briefing').\n" +
+    "- Write a compelling opening section that highlights 1-3 overarching themes, major takeaways, or shocking statistics from the digest.\n" +
+    "- After the intro, present the rest of the digest content grouped by the original themes.\n" +
+    "- Use clean formatting: clear headings and readable paragraphs or clean lists. Do NOT use excessive markdown like bolding every entity or using asterisks for every line.\n" +
+    "- Preserve all concrete facts, numbers, and details from the digest.\n" +
+    "- Do not include URLs, markdown links, HTML links, or a final link section in the body; the system appends the only link section at the bottom.\n" +
+    "- Output plain text/markdown — no preamble.",
 };
 
 type View = "main" | "history";
@@ -91,6 +103,7 @@ type CurrentResult = {
   digest: string;
   story: string;
   linkedin: string;
+  article: string;
   newsletter_subject?: string;
   newsletter_html?: string;
   useful_links?: UsefulLink[];
@@ -119,6 +132,7 @@ export default function Home() {
   const [storyEnabled, setStoryEnabled] = useState(true);
   const [linkedinEnabled, setLinkedinEnabled] = useState(true);
   const [newsletterEnabled, setNewsletterEnabled] = useState(false);
+  const [articleEnabled, setArticleEnabled] = useState(true);
   const [linkedinAutoPostEnabled, setLinkedinAutoPostEnabled] = useState(false);
   const [linkedinPostTime, setLinkedinPostTime] = useState("07:00");
   const [linkedinTimezone, setLinkedinTimezone] = useState("UTC");
@@ -130,7 +144,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CurrentResult | null>(null);
   const [progress, setProgress] = useState<ProgressLine[]>([]);
-  const [activeTab, setActiveTab] = useState<"digest" | "story" | "linkedin" | "newsletter">("digest");
+  const [activeTab, setActiveTab] = useState<"digest" | "story" | "linkedin" | "newsletter" | "article">("digest");
   const [showSettings, setShowSettings] = useState(true);
   const [showPrompts, setShowPrompts] = useState(false);
   const [showMakeModal, setShowMakeModal] = useState(false);
@@ -145,7 +159,7 @@ export default function Home() {
   const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({});
   const [historyDetail, setHistoryDetail] = useState<RunDetail | null>(null);
   const [historyDetailLoading, setHistoryDetailLoading] = useState(false);
-  const [historyTab, setHistoryTab] = useState<"digest" | "story" | "linkedin" | "newsletter">("digest");
+  const [historyTab, setHistoryTab] = useState<"digest" | "story" | "linkedin" | "newsletter" | "article">("digest");
 
   const progressBoxRef = useRef<HTMLDivElement | null>(null);
   const lastProgressAtRef = useRef(Date.now());
@@ -186,6 +200,7 @@ export default function Home() {
         setStoryEnabled(s.story_enabled ?? true);
         setLinkedinEnabled(s.linkedin_enabled ?? true);
         setNewsletterEnabled(Boolean(s.newsletter_enabled));
+        setArticleEnabled(s.article_enabled ?? true);
         setLinkedinAutoPostEnabled(Boolean(s.linkedin_auto_post_enabled));
         setLinkedinPostTime(s.linkedin_post_time || "07:00");
         setLinkedinTimezone(s.linkedin_timezone || "UTC");
@@ -323,6 +338,7 @@ export default function Home() {
         story_enabled: storyEnabled,
         linkedin_enabled: linkedinEnabled,
         newsletter_enabled: newsletterEnabled,
+        article_enabled: articleEnabled,
         linkedin_auto_post_enabled: linkedinAutoPostEnabled,
         linkedin_post_time: linkedinPostTime,
         linkedin_timezone: linkedinTimezone,
@@ -388,7 +404,7 @@ export default function Home() {
       setError("Enter email and app password first.");
       return;
     }
-    if (!prompts.filter || !prompts.digest || (storyEnabled && !prompts.story) || (linkedinEnabled && !prompts.linkedin) || (newsletterEnabled && (!prompts.newsletter_subject || !prompts.newsletter_html))) {
+    if (!prompts.filter || !prompts.digest || (storyEnabled && !prompts.story) || (linkedinEnabled && !prompts.linkedin) || (newsletterEnabled && (!prompts.newsletter_subject || !prompts.newsletter_html)) || (articleEnabled && !prompts.article)) {
       setError("Enabled outputs must have prompts filled. Click 'Reset to defaults' if you cleared them.");
       return;
     }
@@ -410,6 +426,7 @@ export default function Home() {
           story_enabled: storyEnabled,
           linkedin_enabled: linkedinEnabled,
           newsletter_enabled: newsletterEnabled,
+          article_enabled: articleEnabled,
         },
         (evt: StreamEvent) => {
           switch (evt.type) {
@@ -444,6 +461,7 @@ export default function Home() {
                 digest: "",
                 story: "",
                 linkedin: "",
+                article: "",
                 newsletter_subject: "",
                 newsletter_html: "",
               });
@@ -467,6 +485,7 @@ export default function Home() {
                 digest: evt.digest,
                 story: evt.story,
                 linkedin: evt.linkedin,
+                article: evt.article,
                 newsletter_subject: evt.newsletter_subject || "",
                 newsletter_html: evt.newsletter_html || "",
                 useful_links: evt.useful_links || [],
@@ -602,6 +621,11 @@ export default function Home() {
                     <input type="checkbox" checked={newsletterEnabled} onChange={e => setNewsletterEnabled(e.target.checked)}
                            className="h-4 w-4 accent-emerald-600" />
                   </label>
+                  <label className="flex items-center justify-between gap-3 text-sm">
+                    <span>Generate article</span>
+                    <input type="checkbox" checked={articleEnabled} onChange={e => setArticleEnabled(e.target.checked)}
+                           className="h-4 w-4 accent-emerald-600" />
+                  </label>
                 </div>
 
                 <div className="pt-2 border-t border-zinc-100">
@@ -629,6 +653,9 @@ export default function Home() {
                       <PromptArea label="Newsletter HTML prompt"
                                   value={prompts.newsletter_html}
                                   onChange={v => setPrompts({ ...prompts, newsletter_html: v })} />
+                      <PromptArea label="Article prompt"
+                                  value={prompts.article}
+                                  onChange={v => setPrompts({ ...prompts, article: v })} />
                       <button onClick={resetPrompts}
                               className="text-xs text-zinc-500 hover:text-zinc-900 underline">
                         Reset prompts to defaults
@@ -754,6 +781,7 @@ export default function Home() {
                   digest: historyDetail.digest || "",
                   story: historyDetail.story || "",
                   linkedin: historyDetail.linkedin || "",
+                  article: historyDetail.article || "",
                   newsletter_subject: historyDetail.newsletter_subject || "",
                   newsletter_html: historyDetail.newsletter_html || "",
                   useful_links: historyDetail.useful_links || [],
@@ -1019,8 +1047,8 @@ function ResultTabs({
   result, active, setActive, onCopy, onPost, posting, postSuccess,
 }: {
   result: CurrentResult;
-  active: "digest" | "story" | "linkedin" | "newsletter";
-  setActive: (t: "digest" | "story" | "linkedin" | "newsletter") => void;
+  active: "digest" | "story" | "linkedin" | "newsletter" | "article";
+  setActive: (t: "digest" | "story" | "linkedin" | "newsletter" | "article") => void;
   onCopy: (text: string) => void;
   onPost?: (text: string) => void;
   posting?: boolean;
@@ -1031,6 +1059,7 @@ function ResultTabs({
     active === "digest" ? result.digest :
     active === "story"  ? result.story  :
     active === "newsletter" ? `${result.newsletter_subject || ""}\n\n${result.newsletter_html || ""}` :
+    active === "article" ? result.article :
     result.linkedin;
 
   function handleCopy() {
@@ -1043,7 +1072,7 @@ function ResultTabs({
   return (
     <section className="rounded-xl border border-zinc-200 bg-white shadow-sm">
       <div className="flex border-b border-zinc-200">
-        {(["digest", "story", "linkedin", "newsletter"] as const).map(t => (
+        {(["digest", "story", "linkedin", "newsletter", "article"] as const).map(t => (
           <button
             key={t}
             onClick={() => { setActive(t); setCopied(false); }}

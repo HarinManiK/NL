@@ -130,6 +130,21 @@ DEFAULT_NEWSLETTER_HTML_PROMPT = (
 )
 
 
+DEFAULT_ARTICLE_PROMPT = (
+    "You are turning the digest below into a polished, professional newsletter article.\n\n"
+    "Goal:\n"
+    "Create a cohesive article that starts with a strong executive summary and then presents the detailed news.\n\n"
+    "Hard rules:\n"
+    "- Start with an introductory greeting (e.g., 'Welcome to your briefing' or 'Here is an overview of our briefing').\n"
+    "- Write a compelling opening section that highlights 1-3 overarching themes, major takeaways, or shocking statistics from the digest.\n"
+    "- After the intro, present the rest of the digest content grouped by the original themes.\n"
+    "- Use clean formatting: clear headings and readable paragraphs or clean lists. Do NOT use excessive markdown like bolding every entity or using asterisks for every line.\n"
+    "- Preserve all concrete facts, numbers, and details from the digest.\n"
+    "- Do not include URLs, markdown links, HTML links, or a final link section in the body; the system appends the only link section at the bottom.\n"
+    "- Output plain text/markdown — no preamble."
+)
+
+
 class Prompts(BaseModel):
     filter: str = DEFAULT_FILTER_PROMPT
     digest: str = DEFAULT_DIGEST_PROMPT
@@ -137,6 +152,7 @@ class Prompts(BaseModel):
     linkedin: str = DEFAULT_LINKEDIN_PROMPT
     newsletter_subject: str = DEFAULT_NEWSLETTER_SUBJECT_PROMPT
     newsletter_html: str = DEFAULT_NEWSLETTER_HTML_PROMPT
+    article: str = DEFAULT_ARTICLE_PROMPT
 
 
 class VerifyReq(BaseModel):
@@ -154,6 +170,7 @@ class RunReq(BaseModel):
     story_enabled: bool = True
     linkedin_enabled: bool = True
     newsletter_enabled: bool = False
+    article_enabled: bool = True
     imap_server: str = "imap.gmail.com"
     imap_port: int = 993
 
@@ -172,6 +189,7 @@ class SettingsReq(BaseModel):
     story_enabled: bool = True
     linkedin_enabled: bool = True
     newsletter_enabled: bool = False
+    article_enabled: bool = True
     linkedin_auto_post_enabled: bool = False
     linkedin_post_time: str = "07:00"
     linkedin_timezone: str = "UTC"
@@ -308,9 +326,11 @@ def _generate_run(
             "digest": f"Auto-run skipped: no mails found in the last {hours_back} hours.",
             "story": "",
             "linkedin": "",
+            "article": "",
             "story_enabled": story_enabled,
             "linkedin_enabled": linkedin_enabled,
             "newsletter_enabled": newsletter_enabled,
+            "article_enabled": article_enabled,
             "newsletter_subject": "",
             "newsletter_html": "",
             "useful_links": [],
@@ -320,6 +340,7 @@ def _generate_run(
             "linkedin_prompt": prompts.linkedin,
             "newsletter_subject_prompt": prompts.newsletter_subject,
             "newsletter_html_prompt": prompts.newsletter_html,
+            "article_prompt": prompts.article,
             "elapsed_seconds": round(time.time() - started, 1),
         })
         return {
@@ -348,9 +369,11 @@ def _generate_run(
             "digest": f"Auto-run skipped: filter kept 0 of {len(mails)} mails.",
             "story": "",
             "linkedin": "",
+            "article": "",
             "story_enabled": story_enabled,
             "linkedin_enabled": linkedin_enabled,
             "newsletter_enabled": newsletter_enabled,
+            "article_enabled": article_enabled,
             "newsletter_subject": "",
             "newsletter_html": "",
             "useful_links": [],
@@ -360,6 +383,7 @@ def _generate_run(
             "linkedin_prompt": prompts.linkedin,
             "newsletter_subject_prompt": prompts.newsletter_subject,
             "newsletter_html_prompt": prompts.newsletter_html,
+            "article_prompt": prompts.article,
             "elapsed_seconds": round(time.time() - started, 1),
         })
         return {
@@ -383,7 +407,8 @@ def _generate_run(
     linkedin = ""
     newsletter_subject = ""
     newsletter_html = ""
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+    article = ""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
         futures = {}
         if story_enabled:
             futures["story"] = executor.submit(chat, prompts.story, optional_input, max_tokens=8192, temperature=0.6)
@@ -393,6 +418,8 @@ def _generate_run(
             futures["newsletter_subject"] = executor.submit(
                 chat, prompts.newsletter_subject, optional_input, max_tokens=256, temperature=0.5
             )
+        if article_enabled:
+            futures["article"] = executor.submit(chat, prompts.article, optional_input, max_tokens=8192, temperature=0.6)
         for name, future in futures.items():
             if name == "story":
                 story_body = _clean_generated_text(future.result())
@@ -402,6 +429,9 @@ def _generate_run(
                 linkedin = append_links_text(linkedin_body, filter_links_for_body(digest_links, linkedin_body))
             elif name == "newsletter_subject":
                 newsletter_subject = future.result().strip().strip('"')
+            elif name == "article":
+                article_body = _clean_generated_text(future.result())
+                article = append_links_text(article_body, filter_links_for_body(digest_links, article_body))
     if newsletter_enabled:
         newsletter_body = sanitize_newsletter_html(
             chat(prompts.newsletter_html, optional_input, max_tokens=8192, temperature=0.5)
@@ -419,9 +449,11 @@ def _generate_run(
         "digest": digest,
         "story": story,
         "linkedin": linkedin,
+        "article": article,
         "story_enabled": story_enabled,
         "linkedin_enabled": linkedin_enabled,
         "newsletter_enabled": newsletter_enabled,
+        "article_enabled": article_enabled,
         "newsletter_subject": newsletter_subject,
         "newsletter_html": newsletter_html,
         "useful_links": digest_links,
@@ -431,6 +463,7 @@ def _generate_run(
         "linkedin_prompt": prompts.linkedin,
         "newsletter_subject_prompt": prompts.newsletter_subject,
         "newsletter_html_prompt": prompts.newsletter_html,
+        "article_prompt": prompts.article,
         "elapsed_seconds": elapsed,
     }
     insert_run(row)
@@ -445,6 +478,7 @@ def _prompts_from_settings(settings: dict) -> Prompts:
         linkedin=settings.get("linkedin_prompt") or DEFAULT_LINKEDIN_PROMPT,
         newsletter_subject=settings.get("newsletter_subject_prompt") or DEFAULT_NEWSLETTER_SUBJECT_PROMPT,
         newsletter_html=settings.get("newsletter_html_prompt") or DEFAULT_NEWSLETTER_HTML_PROMPT,
+        article=settings.get("article_prompt") or DEFAULT_ARTICLE_PROMPT,
     )
 
 
@@ -644,6 +678,7 @@ def run_stream(req: RunReq):
             linkedin = ""
             newsletter_subject = ""
             newsletter_html = ""
+            article = ""
 
             if req.story_enabled:
                 yield _sse({"type": "step", "name": "story", "status": "start"})
@@ -651,9 +686,11 @@ def run_stream(req: RunReq):
                 yield _sse({"type": "step", "name": "linkedin", "status": "start"})
             if req.newsletter_enabled:
                 yield _sse({"type": "step", "name": "newsletter", "status": "start"})
+            if req.article_enabled:
+                yield _sse({"type": "step", "name": "article", "status": "start"})
 
             try:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
                     futures: Dict[str, Any] = {}
                     if req.story_enabled:
                         futures["story"] = executor.submit(
@@ -667,6 +704,10 @@ def run_stream(req: RunReq):
                         futures["newsletter_subject"] = executor.submit(
                             chat, req.prompts.newsletter_subject, optional_input, max_tokens=256, temperature=0.5
                         )
+                    if req.article_enabled:
+                        futures["article"] = executor.submit(
+                            chat, req.prompts.article, optional_input, max_tokens=8192, temperature=0.6
+                        )
 
                     for name, future in futures.items():
                         if name == "story":
@@ -677,6 +718,9 @@ def run_stream(req: RunReq):
                             linkedin = append_links_text(linkedin_body, filter_links_for_body(digest_links, linkedin_body))
                         elif name == "newsletter_subject":
                             newsletter_subject = future.result().strip().strip('"')
+                        elif name == "article":
+                            article_body = _clean_generated_text(future.result())
+                            article = append_links_text(article_body, filter_links_for_body(digest_links, article_body))
 
                 if req.newsletter_enabled:
                     newsletter_body = sanitize_newsletter_html(
@@ -697,6 +741,8 @@ def run_stream(req: RunReq):
                 yield _sse({"type": "step", "name": "story", "status": "done", "text": story})
             if req.linkedin_enabled:
                 yield _sse({"type": "step", "name": "linkedin", "status": "done", "text": linkedin})
+            if req.article_enabled:
+                yield _sse({"type": "step", "name": "article", "status": "done", "text": article})
             if req.newsletter_enabled:
                 yield _sse({"type": "newsletter_done", "subject": newsletter_subject, "html": newsletter_html})
                 yield _sse({"type": "step", "name": "newsletter", "status": "done"})
@@ -715,9 +761,11 @@ def run_stream(req: RunReq):
                     "digest": digest,
                     "story": story,
                     "linkedin": linkedin,
+                    "article": article,
                     "story_enabled": req.story_enabled,
                     "linkedin_enabled": req.linkedin_enabled,
                     "newsletter_enabled": req.newsletter_enabled,
+                    "article_enabled": req.article_enabled,
                     "newsletter_subject": newsletter_subject,
                     "newsletter_html": newsletter_html,
                     "useful_links": digest_links,
@@ -727,6 +775,7 @@ def run_stream(req: RunReq):
                     "linkedin_prompt": req.prompts.linkedin,
                     "newsletter_subject_prompt": req.prompts.newsletter_subject,
                     "newsletter_html_prompt": req.prompts.newsletter_html,
+                    "article_prompt": req.prompts.article,
                     "elapsed_seconds": elapsed,
                 })
             except DBError as e:
@@ -742,6 +791,7 @@ def run_stream(req: RunReq):
                         "digest": digest,
                         "story": story,
                         "linkedin": linkedin,
+                        "article": article,
                         "newsletter_subject": newsletter_subject,
                         "newsletter_html": newsletter_html,
                         "useful_links": digest_links,
@@ -818,6 +868,7 @@ def get_user_settings(email: EmailStr = Query(...)):
             "story_enabled": bool(s.get("story_enabled", True)),
             "linkedin_enabled": bool(s.get("linkedin_enabled", True)),
             "newsletter_enabled": bool(s.get("newsletter_enabled", False)),
+            "article_enabled": bool(s.get("article_enabled", True)),
             "linkedin_auto_post_enabled": bool(s.get("linkedin_auto_post_enabled", s.get("automation_enabled", False))),
             "linkedin_post_time": s.get("linkedin_post_time") or s.get("post_time") or "07:00",
             "linkedin_timezone": s.get("linkedin_timezone") or s.get("timezone") or "UTC",
@@ -831,6 +882,7 @@ def get_user_settings(email: EmailStr = Query(...)):
                 "linkedin": s.get("linkedin_prompt") or DEFAULT_LINKEDIN_PROMPT,
                 "newsletter_subject": s.get("newsletter_subject_prompt") or DEFAULT_NEWSLETTER_SUBJECT_PROMPT,
                 "newsletter_html": s.get("newsletter_html_prompt") or DEFAULT_NEWSLETTER_HTML_PROMPT,
+                "article": s.get("article_prompt") or DEFAULT_ARTICLE_PROMPT,
             },
             "imap_server": s.get("imap_server", "imap.gmail.com"),
             "imap_port": s.get("imap_port", 993),
@@ -881,6 +933,7 @@ def save_user_settings(req: SettingsReq):
             or (existing.get("linkedin_prompt") or DEFAULT_LINKEDIN_PROMPT) != req.prompts.linkedin
             or (existing.get("newsletter_subject_prompt") or DEFAULT_NEWSLETTER_SUBJECT_PROMPT) != req.prompts.newsletter_subject
             or (existing.get("newsletter_html_prompt") or DEFAULT_NEWSLETTER_HTML_PROMPT) != req.prompts.newsletter_html
+            or (existing.get("article_prompt") or DEFAULT_ARTICLE_PROMPT) != req.prompts.article
             or (existing.get("imap_server") or "imap.gmail.com") != req.imap_server
             or int(existing.get("imap_port") or 993) != req.imap_port
             or bool(existing.get("last_automation_error"))
@@ -897,6 +950,7 @@ def save_user_settings(req: SettingsReq):
             "story_enabled": req.story_enabled,
             "linkedin_enabled": req.linkedin_enabled,
             "newsletter_enabled": req.newsletter_enabled,
+            "article_enabled": req.article_enabled,
             "linkedin_auto_post_enabled": req.linkedin_auto_post_enabled,
             "linkedin_post_time": req.linkedin_post_time,
             "linkedin_timezone": req.linkedin_timezone,
@@ -906,6 +960,7 @@ def save_user_settings(req: SettingsReq):
             "linkedin_prompt": req.prompts.linkedin,
             "newsletter_subject_prompt": req.prompts.newsletter_subject,
             "newsletter_html_prompt": req.prompts.newsletter_html,
+            "article_prompt": req.prompts.article,
             "imap_server": req.imap_server,
             "imap_port": req.imap_port,
         }
@@ -971,6 +1026,7 @@ def _run_automation_for_user(settings: dict, mode: str, claimed_at: Optional[dat
             story_enabled=bool(settings.get("story_enabled", True)),
             linkedin_enabled=mode == "linkedin" and bool(settings.get("linkedin_enabled", True)),
             newsletter_enabled=False,
+            article_enabled=bool(settings.get("article_enabled", True)),
             imap_server=settings.get("imap_server") or "imap.gmail.com",
             imap_port=settings.get("imap_port") or 993,
         )
