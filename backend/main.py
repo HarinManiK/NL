@@ -135,7 +135,7 @@ DEFAULT_ARTICLE_PROMPT = (
     "Goal:\n"
     "Create a cohesive article that starts with a strong executive summary and then presents the detailed news.\n\n"
     "Hard rules:\n"
-    "- Start with an introductory greeting (e.g., 'Welcome to your briefing' or 'Here is an overview of our briefing').\n"
+    "- Start with a oneline greeting referencing yesterday's day of the current week (e.g., 'Welcome to your Friday Briefing.' or 'Here is an overview of our Thursday Briefing:'). Vary the phrasing naturally.\n"
     "- Write a compelling opening section that highlights 1-3 overarching themes, major takeaways, or shocking statistics from the digest.\n"
     "- After the intro, present the rest of the digest content grouped by the original themes.\n"
     "- Use clean formatting: clear headings and readable paragraphs or clean lists. Do NOT use excessive markdown like bolding every entity or using asterisks for every line.\n"
