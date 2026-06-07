@@ -411,7 +411,7 @@ def _generate_run(
             unique_sources.append(s)
     sources_text = ""
     if unique_sources:
-        sources_text = "\n\nSources used to create this digest:\n" + "\n".join(f"- {s}" for s in unique_sources)
+        sources_text = "\n\n**Sources used to create this digest:**\n" + "\n".join(f"- {s}" for s in unique_sources)
 
     story = ""
     linkedin = ""
