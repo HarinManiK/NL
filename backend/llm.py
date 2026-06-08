@@ -4,7 +4,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
+from datetime import datetime
 from typing import List, Optional
 
 import requests
@@ -41,10 +43,15 @@ def chat(system: str, user: str, *, max_tokens: int = 2048,
         "Authorization": f"Bearer {_api_key()}",
         "Content-Type": "application/json",
     }
+
+    # Inject the current day of the week to prevent the model from hallucinating the date
+    today = datetime.now().strftime("%A")
+    system_prompt = f"Note: Today is {today}. The news provided is from recent days.\n\n{system}"
+
     payload = {
         "model": MODEL,
         "messages": [
-            {"role": "system", "content": system},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user},
         ],
         "max_tokens": max_tokens,
