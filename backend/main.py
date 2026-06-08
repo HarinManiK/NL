@@ -100,12 +100,12 @@ DEFAULT_LINKEDIN_PROMPT = (
     "- Hook the reader immediately with a punchy, surprising stat or fact from the digest in the very first sentence.\n"
     "- Use short, punchy paragraphs (1-3 sentences max). Maximize whitespace.\n"
     "- Highlight specific numbers, company names, and hard facts to ground your narrative.\n"
-    "- Use clean formatting: occasional arrows (→) or short numbered lists to break down shifts/trends.\n"
+    "- You MUST use a short numbered list (1, 2, 3) or arrows (→) to break down the main points. Do not use standard bullet points.\n"
     "- End with a strong closing thought followed by a single thought-provoking, open-ended question for the audience.\n"
     "- Include exactly 5 relevant hashtags on the final line.\n"
     "- Length: 200-400 words.\n"
-    "- No emojis unless genuinely useful (rarely).\n"
-    "- Do not include URLs, markdown links, HTML links, or a final link section in the body; the system appends the only link section at the bottom.\n"
+    "- ABSOLUTELY NO EMOJIS. None.\n"
+    "- Do not include URLs, markdown links, HTML links, or a final link section in the body.\n"
     "- Output only the LinkedIn post. No preamble.\n\n"
     "Style:\n"
     "Conversational, sharp, professional, highly analytical founder/investor/operator voice. "
@@ -432,7 +432,7 @@ def _generate_run(
                 story = append_links_text(story_body, filter_links_for_body(digest_links, story_body))
             elif name == "linkedin":
                 linkedin_body = _clean_generated_text(future.result())
-                linkedin = append_links_text(linkedin_body, filter_links_for_body(digest_links, linkedin_body))
+                linkedin = linkedin_body
             elif name == "newsletter_subject":
                 newsletter_subject = future.result().strip().strip('"')
             elif name == "article":
@@ -730,7 +730,7 @@ def run_stream(req: RunReq):
                             story = append_links_text(story_body, filter_links_for_body(digest_links, story_body))
                         elif name == "linkedin":
                             linkedin_body = _clean_generated_text(future.result())
-                            linkedin = append_links_text(linkedin_body, filter_links_for_body(digest_links, linkedin_body))
+                            linkedin = linkedin_body
                         elif name == "newsletter_subject":
                             newsletter_subject = future.result().strip().strip('"')
                         elif name == "article":
