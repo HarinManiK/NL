@@ -30,11 +30,11 @@ from pydantic import BaseModel, EmailStr, Field, HttpUrl
 import requests
 
 from db import (
-    DBError, get_run, get_public_run, insert_run, list_runs,
+    DBError, get_run, insert_run, list_runs,
     get_settings, list_users_for_tick, update_automation_status, upsert_settings,
 )
 from imap_fetch import MailRecord, fetch_recent_mails, fetch_recent_mails_stream, verify_imap
-from llm import LLMError, chat, filter_newsletters, generate_image
+from llm import LLMError, chat, filter_newsletters
 from newsletter import (
     append_links_html,
     append_links_text,
@@ -173,12 +173,11 @@ class RunReq(BaseModel):
     email: EmailStr
     app_password: str = Field(min_length=1)
     hours_back: int = Field(ge=1, le=720)
+    prompts: Prompts = Prompts()
     story_enabled: bool = True
     linkedin_enabled: bool = True
     newsletter_enabled: bool = False
     article_enabled: bool = True
-    thumbnail_enabled: bool = False
-    prompts: Prompts = Field(default_factory=Prompts)
     imap_server: str = "imap.gmail.com"
     imap_port: int = 993
 
@@ -191,14 +190,13 @@ class SettingsReq(BaseModel):
     automation_enabled: bool = False
     timezone: str = "UTC"
     post_time: str = "07:00"
-    prompts: Prompts = Field(default_factory=Prompts)
+    prompts: Prompts = Prompts()
     imap_server: str = "imap.gmail.com"
     imap_port: int = 993
     story_enabled: bool = True
     linkedin_enabled: bool = True
     newsletter_enabled: bool = False
     article_enabled: bool = True
-    thumbnail_enabled: bool = False
     linkedin_auto_post_enabled: bool = False
     linkedin_post_time: str = "07:00"
     linkedin_timezone: str = "UTC"
@@ -317,7 +315,6 @@ def _generate_run(
     story_enabled: bool = True,
     linkedin_enabled: bool = True,
     newsletter_enabled: bool = False,
-    thumbnail_enabled: bool = False,
     imap_server: str = "imap.gmail.com",
     imap_port: int = 993,
 ) -> dict:
@@ -340,8 +337,7 @@ def _generate_run(
             "story_enabled": story_enabled,
             "linkedin_enabled": linkedin_enabled,
             "newsletter_enabled": newsletter_enabled,
-            "thumbnail_enabled": thumbnail_enabled,
-            "article_enabled": True,
+            "article_enabled": article_enabled,
             "newsletter_subject": "",
             "newsletter_html": "",
             "useful_links": [],
@@ -384,8 +380,7 @@ def _generate_run(
             "story_enabled": story_enabled,
             "linkedin_enabled": linkedin_enabled,
             "newsletter_enabled": newsletter_enabled,
-            "thumbnail_enabled": thumbnail_enabled,
-            "article_enabled": True,
+            "article_enabled": article_enabled,
             "newsletter_subject": "",
             "newsletter_html": "",
             "useful_links": [],
@@ -435,68 +430,25 @@ def _generate_run(
         if story_enabled:
             futures["story"] = executor.submit(chat, prompts.story, optional_input, max_tokens=8192, temperature=0.6)
         if linkedin_enabled:
-            futures["linkedin"] = executor.submit(chat, prompts.linkedin, optional_input, max_tokens=8192, temperature=0.7)
+            futures["linkedin"] = executor.submit(chat, DEFAULT_LINKEDIN_PROMPT, optional_input, max_tokens=8192, temperature=0.7)
         if newsletter_enabled:
             futures["newsletter_subject"] = executor.submit(
                 chat, prompts.newsletter_subject, optional_input, max_tokens=256, temperature=0.5
             )
-        futures["article"] = executor.submit(chat, prompts.article, optional_input, max_tokens=8192, temperature=0.6)
+        if article_enabled:
+            futures["article"] = executor.submit(chat, prompts.article, optional_input, max_tokens=8192, temperature=0.6)
         for name, future in futures.items():
             if name == "story":
                 story_body = _clean_generated_text(future.result())
                 story = append_links_text(story_body, filter_links_for_body(digest_links, story_body))
             elif name == "linkedin":
                 linkedin_body = _clean_generated_text(future.result())
-                
-                frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:3000").rstrip("/")
-                public_link = f"{frontend_url}/p/{run_id}"
-                linkedin = f"{linkedin_body}\n\nRead the full deep dive here: {public_link}"
-                
+                linkedin = linkedin_body
             elif name == "newsletter_subject":
                 newsletter_subject = future.result().strip().strip('"')
             elif name == "article":
                 article_body = _clean_generated_text(future.result())
                 article = article_body + sources_text
-                
-    thumbnail_url = None
-    if thumbnail_enabled and article:
-        try:
-            # Truncate article slightly to avoid hitting image model prompt length limits
-            truncated_article = article[:3000]
-            prompt = (
-                "Create a professional hand-drawn whiteboard infographic summarizing the following newsletter.\n\n"
-                "Style:\n"
-                "sketchnote visual thinking style\n"
-                "whiteboard illustration\n"
-                "black marker outlines\n"
-                "simple doodles and icons\n"
-                "clean corporate presentation\n"
-                "subtle accent colors only (blue, green, red)\n"
-                "high readability\n"
-                "executive briefing aesthetic\n"
-                "notebook-style visual summary\n\n"
-                "Layout:\n"
-                "large title at top\n"
-                "subtitle below\n"
-                "divide content into 3-5 major thematic sections\n"
-                "represent each theme with icons and visual metaphors\n"
-                "include key statistics as large bold callouts\n"
-                "use arrows, charts, pie charts, scales, rockets, servers, robots, money symbols, code symbols where appropriate\n"
-                "connect concepts with dotted lines\n"
-                "make it look like a strategy consultant's whiteboard\n\n"
-                "Prioritize:\n"
-                "biggest trends\n"
-                "strongest numbers\n"
-                "most surprising facts\n"
-                "market implications\n\n"
-                "Do not create a text-heavy article.\n"
-                "Convert the content into a visual executive summary.\n\n"
-                f"Source content:\n{truncated_article}"
-            )
-            thumbnail_url = generate_image(prompt)
-        except LLMError as e:
-            log.warning(f"Thumbnail generation failed in tick: {e}")
-
     if newsletter_enabled:
         newsletter_body = sanitize_newsletter_html(
             chat(prompts.newsletter_html, optional_input, max_tokens=8192, temperature=0.5)
@@ -515,11 +467,10 @@ def _generate_run(
         "story": story,
         "linkedin": linkedin,
         "article": article,
-        "thumbnail_url": thumbnail_url,
         "story_enabled": story_enabled,
         "linkedin_enabled": linkedin_enabled,
         "newsletter_enabled": newsletter_enabled,
-        "article_enabled": True,
+        "article_enabled": article_enabled,
         "newsletter_subject": newsletter_subject,
         "newsletter_html": newsletter_html,
         "useful_links": digest_links,
@@ -806,11 +757,7 @@ def run_stream(req: RunReq):
                             story = append_links_text(story_body, filter_links_for_body(digest_links, story_body))
                         elif name == "linkedin":
                             linkedin_body = _clean_generated_text(res)
-                            
-                            frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:3000").rstrip("/")
-                            public_link = f"{frontend_url}/p/{run_id}"
-                            linkedin = f"{linkedin_body}\n\nRead the full deep dive here: {public_link}"
-
+                            linkedin = linkedin_body
                         elif name == "newsletter_subject":
                             newsletter_subject = res.strip().strip('"')
                         elif name == "article":
@@ -830,55 +777,6 @@ def run_stream(req: RunReq):
                     newsletter_html = append_links_html(
                         newsletter_body, filter_links_for_body(digest_links, newsletter_body)
                     )
-
-                # 5b) Generate Thumbnail if enabled
-                thumbnail_url = None
-                if req.thumbnail_enabled and article:
-                    yield _sse({"type": "step", "name": "thumbnail", "status": "start"})
-                    try:
-                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                            truncated_article = article[:3000]
-                            prompt = (
-                                "Create a professional hand-drawn whiteboard infographic summarizing the following newsletter.\n\n"
-                                "Style:\n"
-                                "sketchnote visual thinking style\n"
-                                "whiteboard illustration\n"
-                                "black marker outlines\n"
-                                "simple doodles and icons\n"
-                                "clean corporate presentation\n"
-                                "subtle accent colors only (blue, green, red)\n"
-                                "high readability\n"
-                                "executive briefing aesthetic\n"
-                                "notebook-style visual summary\n\n"
-                                "Layout:\n"
-                                "large title at top\n"
-                                "subtitle below\n"
-                                "divide content into 3-5 major thematic sections\n"
-                                "represent each theme with icons and visual metaphors\n"
-                                "include key statistics as large bold callouts\n"
-                                "use arrows, charts, pie charts, scales, rockets, servers, robots, money symbols, code symbols where appropriate\n"
-                                "connect concepts with dotted lines\n"
-                                "make it look like a strategy consultant's whiteboard\n\n"
-                                "Prioritize:\n"
-                                "biggest trends\n"
-                                "strongest numbers\n"
-                                "most surprising facts\n"
-                                "market implications\n\n"
-                                "Do not create a text-heavy article.\n"
-                                "Convert the content into a visual executive summary.\n\n"
-                                f"Source content:\n{truncated_article}"
-                            )
-                            fut = executor.submit(generate_image, prompt)
-                            while True:
-                                try:
-                                    thumbnail_url = fut.result(timeout=15.0)
-                                    break
-                                except concurrent.futures.TimeoutError:
-                                    yield _sse({"type": "ping", "message": "keep-alive"})
-                        yield _sse({"type": "step", "name": "thumbnail", "status": "done"})
-                    except LLMError as e:
-                        log.warning(f"Thumbnail generation failed: {e}")
-                        yield _sse({"type": "step", "name": "thumbnail", "status": "error", "message": str(e)})
 
             except LLMError as e:
                 yield _sse({"type": "error", "message": f"Parallel generation failed: {e}"})
@@ -912,7 +810,6 @@ def run_stream(req: RunReq):
                     "story": story,
                     "linkedin": linkedin,
                     "article": article,
-                    "thumbnail_url": thumbnail_url,
                     "story_enabled": req.story_enabled,
                     "linkedin_enabled": req.linkedin_enabled,
                     "newsletter_enabled": req.newsletter_enabled,
@@ -943,7 +840,6 @@ def run_stream(req: RunReq):
                         "story": story,
                         "linkedin": linkedin,
                         "article": article,
-                        "thumbnail_url": thumbnail_url,
                         "newsletter_subject": newsletter_subject,
                         "newsletter_html": newsletter_html,
                         "useful_links": digest_links,
@@ -986,24 +882,6 @@ def run_detail(run_id: str, email: EmailStr = Query(...)):
     return row
 
 
-@app.get("/public/runs/{run_id}")
-def public_run_detail(run_id: str):
-    try:
-        row = get_public_run(run_id)
-    except DBError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    if not row:
-        raise HTTPException(status_code=404, detail="Run not found.")
-    
-    return {
-        "run_id": row.get("id"),
-        "article": row.get("article"),
-        "newsletter_subject": row.get("newsletter_subject"),
-        "thumbnail_url": row.get("thumbnail_url"),
-        "created_at": row.get("created_at"),
-        "useful_links": row.get("useful_links")
-    }
-
 # ---------- Settings & manual LinkedIn posting ----------
 
 @app.post("/post")
@@ -1039,7 +917,6 @@ def get_user_settings(email: EmailStr = Query(...)):
             "linkedin_enabled": bool(s.get("linkedin_enabled", True)),
             "newsletter_enabled": bool(s.get("newsletter_enabled", False)),
             "article_enabled": bool(s.get("article_enabled", True)),
-            "thumbnail_enabled": bool(s.get("thumbnail_enabled", False)),
             "linkedin_auto_post_enabled": bool(s.get("linkedin_auto_post_enabled", s.get("automation_enabled", False))),
             "linkedin_post_time": s.get("linkedin_post_time") or s.get("post_time") or "07:00",
             "linkedin_timezone": s.get("linkedin_timezone") or s.get("timezone") or "UTC",
@@ -1122,7 +999,6 @@ def save_user_settings(req: SettingsReq):
             "linkedin_enabled": req.linkedin_enabled,
             "newsletter_enabled": req.newsletter_enabled,
             "article_enabled": req.article_enabled,
-            "thumbnail_enabled": req.thumbnail_enabled,
             "linkedin_auto_post_enabled": req.linkedin_auto_post_enabled,
             "linkedin_post_time": req.linkedin_post_time,
             "linkedin_timezone": req.linkedin_timezone,

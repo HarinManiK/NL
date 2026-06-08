@@ -113,7 +113,6 @@ type CurrentResult = {
   article: string;
   newsletter_subject?: string;
   newsletter_html?: string;
-  thumbnail_url?: string;
   useful_links?: UsefulLink[];
 };
 
@@ -141,7 +140,6 @@ export default function Home() {
   const [linkedinEnabled, setLinkedinEnabled] = useState(true);
   const [newsletterEnabled, setNewsletterEnabled] = useState(false);
   const [articleEnabled, setArticleEnabled] = useState(true);
-  const [thumbnailEnabled, setThumbnailEnabled] = useState(false);
   const [linkedinAutoPostEnabled, setLinkedinAutoPostEnabled] = useState(false);
   const [linkedinPostTime, setLinkedinPostTime] = useState("07:00");
   const [linkedinTimezone, setLinkedinTimezone] = useState("UTC");
@@ -185,7 +183,6 @@ export default function Home() {
     setHoursBack(load<number>("hours_back", 24));
     setMakeWebhookUrl(load<string>("make_webhook_url", ""));
     setAutomationEnabled(load<boolean>("automation_enabled", false));
-    setThumbnailEnabled(load<boolean>("thumbnail_enabled", false));
     setPostTime(load<string>("post_time", "07:00"));
     setTimezone(load<string>("timezone", "UTC"));
     const saved = load<Prompts | null>("prompts", null);
@@ -211,7 +208,6 @@ export default function Home() {
         setLinkedinEnabled(s.linkedin_enabled ?? true);
         setNewsletterEnabled(Boolean(s.newsletter_enabled));
         setArticleEnabled(s.article_enabled ?? true);
-        setThumbnailEnabled(Boolean(s.thumbnail_enabled));
         setLinkedinAutoPostEnabled(Boolean(s.linkedin_auto_post_enabled));
         setLinkedinPostTime(s.linkedin_post_time || "07:00");
         setLinkedinTimezone(s.linkedin_timezone || "UTC");
@@ -240,7 +236,6 @@ export default function Home() {
   useEffect(() => { if (hydrated) save("hours_back", hoursBack); }, [hoursBack, hydrated]);
   useEffect(() => { if (hydrated) save("make_webhook_url", makeWebhookUrl); }, [makeWebhookUrl, hydrated]);
   useEffect(() => { if (hydrated) save("automation_enabled", automationEnabled); }, [automationEnabled, hydrated]);
-  useEffect(() => { if (hydrated) save("thumbnail_enabled", thumbnailEnabled); }, [thumbnailEnabled, hydrated]);
   useEffect(() => { if (hydrated) save("post_time", postTime); }, [postTime, hydrated]);
   useEffect(() => { if (hydrated) save("timezone", timezone); }, [timezone, hydrated]);
   useEffect(() => { if (hydrated) save("prompts", prompts); }, [prompts, hydrated]);
@@ -351,7 +346,6 @@ export default function Home() {
         linkedin_enabled: linkedinEnabled,
         newsletter_enabled: newsletterEnabled,
         article_enabled: articleEnabled,
-        thumbnail_enabled: thumbnailEnabled,
         linkedin_auto_post_enabled: linkedinAutoPostEnabled,
         linkedin_post_time: linkedinPostTime,
         linkedin_timezone: linkedinTimezone,
@@ -440,7 +434,6 @@ export default function Home() {
           linkedin_enabled: linkedinEnabled,
           newsletter_enabled: newsletterEnabled,
           article_enabled: articleEnabled,
-          thumbnail_enabled: thumbnailEnabled,
         },
         (evt: StreamEvent) => {
           switch (evt.type) {
@@ -502,7 +495,6 @@ export default function Home() {
                 article: evt.article,
                 newsletter_subject: evt.newsletter_subject || "",
                 newsletter_html: evt.newsletter_html || "",
-                thumbnail_url: evt.thumbnail_url || undefined,
                 useful_links: evt.useful_links || [],
               };
               addProgress({ kind: "status", text: `Done in ${evt.elapsed_seconds}s.` });
@@ -639,11 +631,6 @@ export default function Home() {
                   <label className="flex items-center justify-between gap-3 text-sm">
                     <span>Generate article</span>
                     <input type="checkbox" checked={articleEnabled} onChange={e => setArticleEnabled(e.target.checked)}
-                           className="h-4 w-4 accent-emerald-600" />
-                  </label>
-                  <label className="flex items-center justify-between gap-3 text-sm">
-                    <span>Generate thumbnail (Requires Article)</span>
-                    <input type="checkbox" checked={thumbnailEnabled} onChange={e => setThumbnailEnabled(e.target.checked)} disabled={!articleEnabled}
                            className="h-4 w-4 accent-emerald-600" />
                   </label>
                 </div>
@@ -1122,21 +1109,11 @@ function ResultTabs({
             <div className="text-xs text-zinc-500 mb-1">Subject</div>
             <div className="font-medium text-zinc-900">{result.newsletter_subject || ""}</div>
           </div>
-          {result.thumbnail_url && (
-            <div className="mb-4 rounded-md overflow-hidden border border-zinc-200">
-              <img src={result.thumbnail_url} alt="Thumbnail" className="w-full h-auto max-h-64 object-cover" />
-            </div>
-          )}
           <div className="rounded-md border border-zinc-200 bg-white p-4"
                dangerouslySetInnerHTML={{ __html: result.newsletter_html || "" }} />
         </div>
       ) : (
         <div className="p-5 text-sm leading-6 text-zinc-800 font-sans">
-          {active === "article" && result.thumbnail_url && (
-            <div className="mb-6 rounded-md overflow-hidden border border-zinc-200">
-              <img src={result.thumbnail_url} alt="Thumbnail" className="w-full h-auto max-h-64 object-cover" />
-            </div>
-          )}
           <ReactMarkdown
             components={{
               h1: ({ ...props }) => <h1 className="text-xl font-bold mt-6 mb-4 text-zinc-900 border-b border-zinc-100 pb-2" {...props} />,

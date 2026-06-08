@@ -50,32 +50,6 @@ def insert_run(row: Dict[str, Any]) -> Dict[str, Any]:
     return data[0] if isinstance(data, list) and data else {}
 
 
-def get_run(run_id: str, email: str) -> Optional[Dict[str, Any]]:
-    url, _ = _conf()
-    r = requests.get(
-        f"{url}/rest/v1/runs?id=eq.{run_id}&email=eq.{email}&select=*",
-        headers=_headers(),
-        timeout=10,
-    )
-    if r.status_code != 200:
-        raise DBError(f"Supabase fetch failed: HTTP {r.status_code}")
-    data = r.json()
-    return data[0] if data else None
-
-
-def get_public_run(run_id: str) -> Optional[Dict[str, Any]]:
-    url, _ = _conf()
-    r = requests.get(
-        f"{url}/rest/v1/runs?id=eq.{run_id}&select=*",
-        headers=_headers(),
-        timeout=10,
-    )
-    if r.status_code != 200:
-        raise DBError(f"Supabase fetch failed: HTTP {r.status_code}")
-    data = r.json()
-    return data[0] if data else None
-
-
 def list_runs(email: str, limit: int = 50) -> List[Dict[str, Any]]:
     url, _ = _conf()
     r = requests.get(
