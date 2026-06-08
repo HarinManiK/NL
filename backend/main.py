@@ -417,7 +417,7 @@ def _generate_run(
         if story_enabled:
             futures["story"] = executor.submit(chat, prompts.story, optional_input, max_tokens=8192, temperature=0.6)
         if linkedin_enabled:
-            futures["linkedin"] = executor.submit(chat, prompts.linkedin, optional_input, max_tokens=8192, temperature=0.7)
+            futures["linkedin"] = executor.submit(chat, DEFAULT_LINKEDIN_PROMPT, optional_input, max_tokens=8192, temperature=0.7)
         if newsletter_enabled:
             futures["newsletter_subject"] = executor.submit(
                 chat, prompts.newsletter_subject, optional_input, max_tokens=256, temperature=0.5
@@ -711,7 +711,7 @@ def run_stream(req: RunReq):
                         )
                     if req.linkedin_enabled:
                         futures["linkedin"] = executor.submit(
-                            chat, req.prompts.linkedin, optional_input, max_tokens=8192, temperature=0.7
+                            chat, DEFAULT_LINKEDIN_PROMPT, optional_input, max_tokens=8192, temperature=0.7
                         )
                     if req.newsletter_enabled:
                         futures["newsletter_subject"] = executor.submit(
