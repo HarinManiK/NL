@@ -102,7 +102,7 @@ DEFAULT_LINKEDIN_PROMPT = (
     "- Open with a single, surprising statistic or hard fact from the digest. No greetings.\n"
     "- Group the most important news into 3 distinct takeaways or market shifts.\n"
     "- Use short, 1-2 sentence paragraphs to maximize whitespace.\n"
-    "- Use arrows (→) or numbers (1, 2, 3) for lists. Do not use standard bullet points.\n"
+    "- Try to breakdown stuff into easily readable points. Use arrows (→) or numbers (1, 2, 3) for lists. Do not use standard bullet points.\n"
     "- Stick strictly to concrete numbers, company names, and facts from the digest. Drop all fluff.\n"
     "- Conclude with a single, open-ended question for the reader.\n"
     "- Place exactly 5 relevant hashtags at the very bottom.\n\n"
