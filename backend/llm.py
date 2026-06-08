@@ -10,8 +10,10 @@ from typing import List, Optional
 import requests
 
 AIMLAPI_URL = "https://api.aimlapi.com/v1/chat/completions"
+AIMLAPI_IMAGE_URL = "https://api.aimlapi.com/images/generations"
 # Override at runtime by setting AIMLAPI_MODEL on the server.
 MODEL = os.environ.get("AIMLAPI_MODEL", "gemini-3.1-pro-preview").strip()
+IMAGE_MODEL = os.environ.get("AIMLAPI_IMAGE_MODEL", "Gemini 3 Pro Image (Nano Banana Pro)").strip()
 
 log = logging.getLogger("nl.llm")
 
@@ -97,6 +99,54 @@ def chat(system: str, user: str, *, max_tokens: int = 2048,
 
     raise LLMError(
         f"AIMLAPI error after {max_retries} attempts. "
+        f"Last error — {last_err}"
+    )
+
+
+def generate_image(prompt: str, *, max_retries: int = 3) -> str:
+    """Generates an image based on the prompt using AIMLAPI. Returns the URL."""
+    headers = {
+        "Authorization": f"Bearer {_api_key()}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": IMAGE_MODEL,
+        "prompt": prompt,
+        "n": 1,
+    }
+
+    last_err = ""
+    for attempt in range(max_retries):
+        try:
+            r = requests.post(AIMLAPI_IMAGE_URL, headers=headers,
+                              data=json.dumps(payload), timeout=120)
+        except requests.RequestException as e:
+            last_err = f"network error: {e}"
+            time.sleep(min(2 ** attempt, 30))
+            continue
+
+        if r.status_code in (200, 201):
+            try:
+                data = r.json()
+                return data["data"][0]["url"]
+            except (ValueError, KeyError, IndexError) as e:
+                raise LLMError(
+                    f"AIMLAPI returned {r.status_code} but response shape was unexpected: {e}. "
+                    f"Raw body (first 500 chars): {r.text[:500]}"
+                ) from e
+
+        if r.status_code in (408, 425, 429, 500, 502, 503, 504):
+            time.sleep(min(2 ** (attempt + 2), 60))
+            last_err = f"HTTP {r.status_code}: {r.text[:300]}"
+            continue
+
+        raise LLMError(
+            f"AIMLAPI Image API returned HTTP {r.status_code}. "
+            f"Body (first 500 chars): {r.text[:500]}"
+        )
+
+    raise LLMError(
+        f"AIMLAPI image error after {max_retries} attempts. "
         f"Last error — {last_err}"
     )
 

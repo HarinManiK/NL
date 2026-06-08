@@ -48,28 +48,35 @@ const DEFAULT_PROMPTS: Prompts = {
     "with no preamble. Do not include URLs, markdown links, HTML links, or a final link section in the body; " +
     "the system appends the only link section at the bottom.",
   linkedin:
-    "Turn the digest below into an engaging LinkedIn post.\n\n" +
-    "Goal:\n" +
-    "Create a LinkedIn-ready post that captures the full value of the digest without losing important details.\n\n" +
-    "Hard rules:\n" +
-    "- Do NOT reduce this to only 2–3 themes.\n" +
-    "- Preserve all important concrete facts: company names, product names, people, numbers, prices, funding amounts, dates, percentages, APYs, viewership numbers, policy changes, and major claims.\n" +
-    "- You may combine related points, but do not drop major items.\n" +
-    "- Write it as a cohesive post, not a source-by-source summary.\n" +
-    "- Use theme-based grouping if needed.\n" +
-    "- Add light interpretation, but do not invent facts.\n" +
-    "- Avoid generic lines like “innovation is accelerating” or “the future is here.”\n" +
-    "- Start with a specific hook based on the strongest pattern in the digest.\n" +
-    "- Use short paragraphs and clean bullets.\n" +
-    "- End with a useful takeaway or discussion question.\n" +
-    "- Length: 350–600 words depending on digest size.\n" +
-    "- No emojis unless genuinely useful.\n" +
-    "- Add 3–5 relevant hashtags on the final line.\n" +
-    "- Do not include URLs, markdown links, HTML links, or a final link section in the body; the system appends the only link section at the bottom.\n" +
-    "- Output only the LinkedIn post. No preamble.\n\n" +
-    "Style:\n" +
-    "Conversational, sharp, professional, founder/investor/operator voice.\n" +
-    "Make it detailed enough to feel valuable, but clean enough that someone would actually read it on LinkedIn.",
+    "Write a sharp, punchy LinkedIn post summarizing the provided digest for an audience of founders and tech operators.\n\n" +
+    "CRITICAL NEGATIVE CONSTRAINTS:\n" +
+    "1. NO EMOJIS. Not a single emoji is allowed.\n" +
+    "2. NO PROMOTIONAL LANGUAGE. Do not write 'Read my article' or 'Check out the link'.\n" +
+    "3. NO EM DASHES. Do not use the '—' or '-' character to connect sentences.\n" +
+    "4. NO LINKS. Do not include URLs.\n" +
+    "5. NO ACADEMIC FLUFF. Avoid words like 'educational institutions', 'actively rushing', 'stark deficit'. Write like a sharp Silicon Valley operator.\n\n" +
+    "Instructions:\n" +
+    "- Identify a single interesting theme from the digest. Select 3 related items that support this theme. Ignore unrelated news.\n" +
+    "- Use symbols ($, %) and acronyms (AI, ROI, VC) naturally. Do NOT spell out 'percent' or 'Artificial Intelligence'.\n" +
+    "- Keep paragraphs to 1-2 short, punchy lines. Never use thick block paragraphs.\n\n" +
+    "Follow this EXACT structural template:\n\n" +
+    "[Punchy 1-sentence hook with a surprising stat, fact, or bold claim]\n\n" +
+    "[1 short sentence elaborating on the hook]\n\n" +
+    "[1 short sentence providing the business reality or tension]\n\n" +
+    "→ [1 quick context stat/fact from the digest]\n" +
+    "→ [Another quick context stat/fact from the digest]\n\n" +
+    "[Transition sentence, e.g., 'Three shifts we noticed in today's briefing:']\n\n" +
+    "1. [Very Short Heading]\n" +
+    "[1-2 short, punchy sentences explaining this point using hard facts/numbers. NO FLUFF.]\n\n" +
+    "2. [Very Short Heading]\n" +
+    "[1-2 short, punchy sentences explaining this point using hard facts/numbers.]\n\n" +
+    "3. [Very Short Heading]\n" +
+    "[1-2 short, punchy sentences explaining this point using hard facts/numbers.]\n\n" +
+    "[1-2 very short lines of closing synthesis. Focus on the bottom line.]\n\n" +
+    "[Open-ended question for the reader]\n\n" +
+    "#Hashtag1 #Hashtag2 #Hashtag3 #Hashtag4 #Hashtag5\n\n" +
+    "Tone:\n" +
+    "Sharp, contrarian, and highly analytical. Sound like a Silicon Valley investor or founder talking to peers. Use extremely concise, punchy sentences.",
   newsletter_subject:
     "Write a concise, specific email subject line for the newsletter below. " +
     "Make it useful and professional. Keep it under 80 characters. " +
@@ -106,6 +113,7 @@ type CurrentResult = {
   article: string;
   newsletter_subject?: string;
   newsletter_html?: string;
+  thumbnail_url?: string;
   useful_links?: UsefulLink[];
 };
 
@@ -133,6 +141,7 @@ export default function Home() {
   const [linkedinEnabled, setLinkedinEnabled] = useState(true);
   const [newsletterEnabled, setNewsletterEnabled] = useState(false);
   const [articleEnabled, setArticleEnabled] = useState(true);
+  const [thumbnailEnabled, setThumbnailEnabled] = useState(false);
   const [linkedinAutoPostEnabled, setLinkedinAutoPostEnabled] = useState(false);
   const [linkedinPostTime, setLinkedinPostTime] = useState("07:00");
   const [linkedinTimezone, setLinkedinTimezone] = useState("UTC");
@@ -176,6 +185,7 @@ export default function Home() {
     setHoursBack(load<number>("hours_back", 24));
     setMakeWebhookUrl(load<string>("make_webhook_url", ""));
     setAutomationEnabled(load<boolean>("automation_enabled", false));
+    setThumbnailEnabled(load<boolean>("thumbnail_enabled", false));
     setPostTime(load<string>("post_time", "07:00"));
     setTimezone(load<string>("timezone", "UTC"));
     const saved = load<Prompts | null>("prompts", null);
@@ -201,6 +211,7 @@ export default function Home() {
         setLinkedinEnabled(s.linkedin_enabled ?? true);
         setNewsletterEnabled(Boolean(s.newsletter_enabled));
         setArticleEnabled(s.article_enabled ?? true);
+        setThumbnailEnabled(Boolean(s.thumbnail_enabled));
         setLinkedinAutoPostEnabled(Boolean(s.linkedin_auto_post_enabled));
         setLinkedinPostTime(s.linkedin_post_time || "07:00");
         setLinkedinTimezone(s.linkedin_timezone || "UTC");
@@ -229,6 +240,7 @@ export default function Home() {
   useEffect(() => { if (hydrated) save("hours_back", hoursBack); }, [hoursBack, hydrated]);
   useEffect(() => { if (hydrated) save("make_webhook_url", makeWebhookUrl); }, [makeWebhookUrl, hydrated]);
   useEffect(() => { if (hydrated) save("automation_enabled", automationEnabled); }, [automationEnabled, hydrated]);
+  useEffect(() => { if (hydrated) save("thumbnail_enabled", thumbnailEnabled); }, [thumbnailEnabled, hydrated]);
   useEffect(() => { if (hydrated) save("post_time", postTime); }, [postTime, hydrated]);
   useEffect(() => { if (hydrated) save("timezone", timezone); }, [timezone, hydrated]);
   useEffect(() => { if (hydrated) save("prompts", prompts); }, [prompts, hydrated]);
@@ -339,6 +351,7 @@ export default function Home() {
         linkedin_enabled: linkedinEnabled,
         newsletter_enabled: newsletterEnabled,
         article_enabled: articleEnabled,
+        thumbnail_enabled: thumbnailEnabled,
         linkedin_auto_post_enabled: linkedinAutoPostEnabled,
         linkedin_post_time: linkedinPostTime,
         linkedin_timezone: linkedinTimezone,
@@ -427,6 +440,7 @@ export default function Home() {
           linkedin_enabled: linkedinEnabled,
           newsletter_enabled: newsletterEnabled,
           article_enabled: articleEnabled,
+          thumbnail_enabled: thumbnailEnabled,
         },
         (evt: StreamEvent) => {
           switch (evt.type) {
@@ -488,6 +502,7 @@ export default function Home() {
                 article: evt.article,
                 newsletter_subject: evt.newsletter_subject || "",
                 newsletter_html: evt.newsletter_html || "",
+                thumbnail_url: evt.thumbnail_url || undefined,
                 useful_links: evt.useful_links || [],
               };
               addProgress({ kind: "status", text: `Done in ${evt.elapsed_seconds}s.` });
@@ -624,6 +639,11 @@ export default function Home() {
                   <label className="flex items-center justify-between gap-3 text-sm">
                     <span>Generate article</span>
                     <input type="checkbox" checked={articleEnabled} onChange={e => setArticleEnabled(e.target.checked)}
+                           className="h-4 w-4 accent-emerald-600" />
+                  </label>
+                  <label className="flex items-center justify-between gap-3 text-sm">
+                    <span>Generate thumbnail (Requires Article)</span>
+                    <input type="checkbox" checked={thumbnailEnabled} onChange={e => setThumbnailEnabled(e.target.checked)} disabled={!articleEnabled}
                            className="h-4 w-4 accent-emerald-600" />
                   </label>
                 </div>
@@ -1102,11 +1122,21 @@ function ResultTabs({
             <div className="text-xs text-zinc-500 mb-1">Subject</div>
             <div className="font-medium text-zinc-900">{result.newsletter_subject || ""}</div>
           </div>
+          {result.thumbnail_url && (
+            <div className="mb-4 rounded-md overflow-hidden border border-zinc-200">
+              <img src={result.thumbnail_url} alt="Thumbnail" className="w-full h-auto max-h-64 object-cover" />
+            </div>
+          )}
           <div className="rounded-md border border-zinc-200 bg-white p-4"
                dangerouslySetInnerHTML={{ __html: result.newsletter_html || "" }} />
         </div>
       ) : (
         <div className="p-5 text-sm leading-6 text-zinc-800 font-sans">
+          {active === "article" && result.thumbnail_url && (
+            <div className="mb-6 rounded-md overflow-hidden border border-zinc-200">
+              <img src={result.thumbnail_url} alt="Thumbnail" className="w-full h-auto max-h-64 object-cover" />
+            </div>
+          )}
           <ReactMarkdown
             components={{
               h1: ({ ...props }) => <h1 className="text-xl font-bold mt-6 mb-4 text-zinc-900 border-b border-zinc-100 pb-2" {...props} />,

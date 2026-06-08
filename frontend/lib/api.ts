@@ -43,6 +43,7 @@ export type RunDetail = {
   article?: string;
   newsletter_subject?: string;
   newsletter_html?: string;
+  thumbnail_url?: string;
   useful_links?: UsefulLink[];
   elapsed_seconds?: number;
 };
@@ -66,7 +67,7 @@ export type StreamEvent =
   | { type: "filter_done"; kept: number; total: number; run_id: string }
   | { type: "step"; name: "digest" | "story" | "linkedin" | "newsletter" | "article"; status: "start" | "done"; text?: string }
   | { type: "newsletter_done"; subject: string; html: string }
-  | { type: "complete"; run_id: string; num_total: number; num_kept: number; digest: string; story: string; linkedin: string; article: string; newsletter_subject?: string; newsletter_html?: string; useful_links?: UsefulLink[]; elapsed_seconds: number }
+  | { type: "complete"; run_id: string; num_total: number; num_kept: number; digest: string; story: string; linkedin: string; article: string; newsletter_subject?: string; newsletter_html?: string; thumbnail_url?: string; useful_links?: UsefulLink[]; elapsed_seconds: number }
   | { type: "error"; message: string };
 
 export type UserSettings = {
@@ -87,6 +88,7 @@ export type UserSettings = {
   linkedin_enabled?: boolean;
   newsletter_enabled?: boolean;
   article_enabled?: boolean;
+  thumbnail_enabled?: boolean;
   linkedin_auto_post_enabled?: boolean;
   linkedin_post_time?: string;
   linkedin_timezone?: string;
@@ -108,6 +110,7 @@ export type SaveSettingsPayload = {
   linkedin_enabled: boolean;
   newsletter_enabled: boolean;
   article_enabled: boolean;
+  thumbnail_enabled: boolean;
   linkedin_auto_post_enabled: boolean;
   linkedin_post_time: string;
   linkedin_timezone: string;
@@ -161,6 +164,7 @@ export async function streamRun(
     linkedin_enabled: boolean;
     newsletter_enabled: boolean;
     article_enabled: boolean;
+    thumbnail_enabled: boolean;
   },
   onEvent: (evt: StreamEvent) => void,
   signal?: AbortSignal,
