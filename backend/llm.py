@@ -11,7 +11,7 @@ import requests
 
 AIMLAPI_URL = "https://api.aimlapi.com/v1/chat/completions"
 # Override at runtime by setting AIMLAPI_MODEL on the server.
-MODEL = os.environ.get("AIMLAPI_MODEL", "gemini-3.1-pro-preview").strip()
+MODEL = os.environ.get("AIMLAPI_MODEL", "google/gemini-3-flash-preview").strip()
 
 log = logging.getLogger("nl.llm")
 
