@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import time
-import datetime
 from typing import List, Optional
 
 import requests
@@ -40,13 +39,10 @@ def chat(system: str, user: str, *, max_tokens: int = 2048,
         "Authorization": f"Bearer {_api_key()}",
         "Content-Type": "application/json",
     }
-    today_str = datetime.datetime.now(datetime.timezone.utc).strftime("%A, %B %d, %Y")
-    system_with_date = f"System Context: Today is {today_str} (UTC).\n\n{system}"
-
     payload = {
         "model": MODEL,
         "messages": [
-            {"role": "system", "content": system_with_date},
+            {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
         "max_tokens": max_tokens,
