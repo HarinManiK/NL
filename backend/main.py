@@ -19,7 +19,7 @@ import re
 import time
 import traceback
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, Iterator, List, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -240,6 +240,20 @@ def _clean_generated_text(text: str) -> str:
     return cleaned
 
 
+def _get_date_context(email: str) -> str:
+    try:
+        settings = get_settings(email)
+        timezone_name = settings.get("timezone") or "UTC"
+        tz = ZoneInfo(timezone_name)
+    except Exception:
+        timezone_name = "UTC"
+        tz = ZoneInfo("UTC")
+    user_now = datetime.now(timezone.utc).astimezone(tz)
+    today_str = user_now.strftime("%A, %B %d, %Y")
+    yesterday_str = (user_now - timedelta(days=1)).strftime("%A, %B %d, %Y")
+    return f"System Context: Today is {today_str} ({timezone_name}). Yesterday was {yesterday_str}.\n\n"
+
+
 def _schedule_due_status(settings: dict, now_utc: datetime, prefix: str) -> dict:
     if prefix == "linkedin":
         time_key = "linkedin_post_time"
@@ -406,7 +420,8 @@ def _generate_run(
     if len(aggregate) > 80000:
         aggregate = aggregate[:80000] + "\n\n[...aggregate truncated to fit context...]"
 
-    digest_body = _clean_generated_text(chat(prompts.digest, aggregate, max_tokens=8192, temperature=0.4))
+    date_context = _get_date_context(email)
+    digest_body = _clean_generated_text(chat(date_context + prompts.digest, aggregate, max_tokens=8192, temperature=0.4))
     digest_links = filter_links_for_body(useful_links, digest_body)
     digest = append_links_text(digest_body, digest_links)
     optional_input = digest_body + _link_context_block(digest_links)
@@ -428,15 +443,15 @@ def _generate_run(
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
         futures = {}
         if story_enabled:
-            futures["story"] = executor.submit(chat, prompts.story, optional_input, max_tokens=8192, temperature=0.6)
+            futures["story"] = executor.submit(chat, date_context + prompts.story, optional_input, max_tokens=8192, temperature=0.6)
         if linkedin_enabled:
-            futures["linkedin"] = executor.submit(chat, DEFAULT_LINKEDIN_PROMPT, optional_input, max_tokens=8192, temperature=0.7)
+            futures["linkedin"] = executor.submit(chat, date_context + DEFAULT_LINKEDIN_PROMPT, optional_input, max_tokens=8192, temperature=0.7)
         if newsletter_enabled:
             futures["newsletter_subject"] = executor.submit(
-                chat, prompts.newsletter_subject, optional_input, max_tokens=256, temperature=0.5
+                chat, date_context + prompts.newsletter_subject, optional_input, max_tokens=256, temperature=0.5
             )
         if article_enabled:
-            futures["article"] = executor.submit(chat, prompts.article, optional_input, max_tokens=8192, temperature=0.6)
+            futures["article"] = executor.submit(chat, date_context + prompts.article, optional_input, max_tokens=8192, temperature=0.6)
         for name, future in futures.items():
             if name == "story":
                 story_body = _clean_generated_text(future.result())
@@ -451,7 +466,7 @@ def _generate_run(
                 article = article_body + sources_text
     if newsletter_enabled:
         newsletter_body = sanitize_newsletter_html(
-            chat(prompts.newsletter_html, optional_input, max_tokens=8192, temperature=0.5)
+            chat(date_context + prompts.newsletter_html, optional_input, max_tokens=8192, temperature=0.5)
         )
         newsletter_html = append_links_html(newsletter_body, filter_links_for_body(digest_links, newsletter_body))
 
@@ -679,10 +694,11 @@ def run_stream(req: RunReq):
                 aggregate = aggregate[:80000] + "\n\n[…aggregate truncated to fit context…]"
 
             # 4) Digest
+            date_context = _get_date_context(req.email)
             yield _sse({"type": "step", "name": "digest", "status": "start"})
             try:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    fut = executor.submit(chat, req.prompts.digest, aggregate, max_tokens=8192, temperature=0.4)
+                    fut = executor.submit(chat, date_context + req.prompts.digest, aggregate, max_tokens=8192, temperature=0.4)
                     while True:
                         try:
                             digest_body_raw = fut.result(timeout=15.0)
@@ -729,19 +745,19 @@ def run_stream(req: RunReq):
                     futures: Dict[str, Any] = {}
                     if req.story_enabled:
                         futures["story"] = executor.submit(
-                            chat, req.prompts.story, optional_input, max_tokens=8192, temperature=0.6
+                            chat, date_context + req.prompts.story, optional_input, max_tokens=8192, temperature=0.6
                         )
                     if req.linkedin_enabled:
                         futures["linkedin"] = executor.submit(
-                            chat, DEFAULT_LINKEDIN_PROMPT, optional_input, max_tokens=8192, temperature=0.7
+                            chat, date_context + DEFAULT_LINKEDIN_PROMPT, optional_input, max_tokens=8192, temperature=0.7
                         )
                     if req.newsletter_enabled:
                         futures["newsletter_subject"] = executor.submit(
-                            chat, req.prompts.newsletter_subject, optional_input, max_tokens=256, temperature=0.5
+                            chat, date_context + req.prompts.newsletter_subject, optional_input, max_tokens=256, temperature=0.5
                         )
                     if req.article_enabled:
                         futures["article"] = executor.submit(
-                            chat, req.prompts.article, optional_input, max_tokens=8192, temperature=0.6
+                            chat, date_context + req.prompts.article, optional_input, max_tokens=8192, temperature=0.6
                         )
 
                     for name, future in futures.items():
@@ -766,7 +782,7 @@ def run_stream(req: RunReq):
 
                 if req.newsletter_enabled:
                     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                        fut = executor.submit(chat, req.prompts.newsletter_html, optional_input, max_tokens=8192, temperature=0.5)
+                        fut = executor.submit(chat, date_context + req.prompts.newsletter_html, optional_input, max_tokens=8192, temperature=0.5)
                         while True:
                             try:
                                 html_raw = fut.result(timeout=15.0)
