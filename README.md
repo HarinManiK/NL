@@ -1,6 +1,6 @@
 ---
 title: Newsletter Digest API
-emoji: ??
+emoji: 🚀
 colorFrom: blue
 colorTo: indigo
 sdk: docker
