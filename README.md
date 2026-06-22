@@ -1,3 +1,11 @@
+---
+title: Newsletter Digest API
+emoji: ??
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+pinned: false
+---
 # Newsletter Digest
 
 Pull recent newsletters from your Gmail, AI-filter them, then generate three text outputs:
@@ -118,3 +126,4 @@ npm run dev
 - Mail bodies > 8000 chars are truncated per-mail; the aggregate is capped at 80k chars
   to fit context.
 - "Newsletter" detection is purely the filter prompt — edit it in the UI to taste.
+
